@@ -299,7 +299,7 @@ Panel {
       root.detailTeams = { away: away, home: home, venue: venue, addr: addr, status: comp.status ? comp.status.type.detail : "" }
       root.detailStats = paired
       root.detailPlayers = box.players || null
-      // Build grouped player stats for the Players tab (unified by stat name)// Build grouped player stats for the Players tab (unified by stat name)
+      // Build grouped player stats for the Players tab (unified by stat name)
       var groups = []
       var groupMap = {}
       var order = []
@@ -325,13 +325,14 @@ Panel {
               if (pi === 0) groupMap[gname].away = list
               else groupMap[gname].home = list
             }
-            // Prefer labels from any entry// Prefer labels from any entry
+            // Prefer labels from any entry
             if ((!groupMap[gname].labels || groupMap[gname].labels.length === 0) && s.labels) groupMap[gname].labels = s.labels
           }
         }
         for (var gi = 0; gi < order.length; gi++) groups.push(groupMap[order[gi]])
       }
       root.detailPlayerGroups = groups
+      console.log("detail", id, "players", box.players ? box.players.length : 0, "groups", groups.length, "stats", paired.length)
       root.detailLoading = false
     } catch (e) {
       root.detailError = "Failed to load"
