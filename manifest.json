@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "chris.nfl",
+  "name": "NFL Scores",
+  "version": "1.0.0",
+  "author": "chris",
+  "license": "MIT",
+  "description": "Live NFL scores with favorited teams pinned to the top",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "NFL Scores",
+    "description": "Live NFL scoreboard from ESPN",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
