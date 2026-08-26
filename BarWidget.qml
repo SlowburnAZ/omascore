@@ -54,15 +54,15 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uD83C\uDFC8"
+    text: "\uD83C\uDFC6"
     dimmed: !root.panel || root.panel.games.length === 0
     active: root.panel ? root.panel.favLive : false
     foreground: root.panel && root.panel.favLive ? Color.accent : Color.foreground
     tooltipText: !root.panel || root.panel.games.length === 0
-      ? "NFL scores"
+      ? "OmaScore"
       : (root.panel.liveCount > 0
            ? root.panel.liveCount + " live" + (root.panel.favLive ? " — favorite playing" : "")
-           : "NFL scores")
+           : "OmaScore")
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
     }

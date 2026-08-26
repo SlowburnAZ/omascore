@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "slowburnaz.omascore",
-  "name": "NFL Scores",
+  "name": "OmaScore",
   "version": "1.0.0",
   "author": "slowburnaz",
   "license": "MIT",
-  "description": "Live NFL scores with favorited teams pinned to the top",
+  "description": "Live scores for NFL, NBA, MLB, NHL, college and soccer — favorited teams pinned to the top",
   "kinds": [
     "bar-widget"
   ],
@@ -13,8 +13,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "NFL Scores",
-    "description": "Live NFL scoreboard from ESPN",
+    "displayName": "OmaScore",
+    "description": "Live multi-league scoreboard from ESPN (NFL, NBA, MLB, NHL, college, soccer)",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "right"

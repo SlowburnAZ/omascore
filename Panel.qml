@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Ui
 import qs.Commons
+import "Model.js" as Model
 
 Panel {
   id: root
@@ -15,22 +16,27 @@ Panel {
   property var hostWidget: null
 
   property var games: []
-  property var favorites: []
+  property var favorites: ({})
   property int liveCount: 0
   property bool favLive: false
   property string lastError: ""
 
-  readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
-  readonly property string apiUrl: "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+  readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
+  readonly property string oldStorePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
+  readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
 
+  property string currentLeagueId: Model.defaultLeagueId
   property var weekStart: null
   property var weekDateStrs: []
   property var weekDates: []
   property var hasGames: [false,false,false,false,false,false,false]
   property int selectedDay: 0
-  property var dayLabels: ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
-  property var monthLabels: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+  property var selectedDate: null
+  property string selectedDateStr: ""
+  property var dayLabels: Model.dayLabels
+  property var monthLabels: Model.monthLabels
+  readonly property bool isWeekMode: true
 
   property var selectedGame: null
   property var detailStats: null
@@ -38,6 +44,7 @@ Panel {
   property var detailPlayers: null
   property var detailPlayerGroups: null
   property bool detailLoading: false
+  property bool detailStale: false
   property string detailError: ""
   property int detailTab: 0
 
@@ -47,345 +54,120 @@ Panel {
     return false
   }
 
-  function isFav(abbr) {
-    return root.favorites.indexOf(abbr) >= 0
-  }
-
-  function loadFavorites(raw) {
-    var parsed = []
-    try { parsed = JSON.parse(raw || "[]") } catch (e) { parsed = [] }
-    if (!Array.isArray(parsed)) parsed = []
-    root.favorites = parsed
-  }
-
-  function saveFavorites() {
-    store.setText(JSON.stringify(root.favorites, null, 2) + "\n")
-  }
-
+  function isFav(abbr) { return Model.isFav(root.favorites, abbr, root.currentLeagueId) }
+  function loadFavorites(raw) { root.favorites = Model.parseFavorites(raw) }
+  function saveFavorites() { store.setText(JSON.stringify(root.favorites, null, 2) + "\n") }
   function toggleFav(abbr) {
-    var arr = root.favorites.slice()
-    var idx = arr.indexOf(abbr)
-    if (idx >= 0) arr.splice(idx, 1)
-    else arr.push(abbr)
-    root.favorites = arr
+    root.favorites = Model.toggleFavMap(root.favorites, root.currentLeagueId, abbr)
     root.saveFavorites()
     root.games = root.sorted(root.games)
     root.recount()
   }
-
-  function rank(g) {
-    var fav = root.isFav(g.away.abbr) || root.isFav(g.home.abbr)
-    if (g.state === "in") return fav ? 0 : 2
-    if (fav) return 1
-    if (g.state === "pre") return 3
-    return 4
-  }
-
-  function sorted(list) {
-    var arr = list.slice()
-    arr.sort(function(a, b) { return root.rank(a) - root.rank(b) })
-    return arr
-  }
-
+  function isLeagueFav(id) { return Model.isLeagueFav(root.favorites, id) }
+  function toggleLeagueFav(id) { root.favorites = Model.toggleLeagueFav(root.favorites, id); root.saveFavorites(); }
+  function rank(g) { return Model.rank(g, root.favorites, root.currentLeagueId) }
+  function sorted(list) { return Model.sorted(list, root.favorites, root.currentLeagueId) }
   function recount() {
-    var live = 0
-    var favPlaying = false
-    for (var i = 0; i < root.games.length; i++) {
-      var g = root.games[i]
-      if (g.state === "in") {
-        live++
-        if (root.isFav(g.away.abbr) || root.isFav(g.home.abbr)) favPlaying = true
-      }
-    }
-    root.liveCount = live
-    root.favLive = favPlaying
+    var r = Model.recount(root.games, root.favorites, root.currentLeagueId)
+    root.liveCount = r.liveCount; root.favLive = r.favLive
   }
-
-  function leads(game, side) {
-    if (!game || !game[side] || game.state === "pre") return false
-    var mine = parseInt(game[side].score) || 0
-    var other = parseInt(game[side === "away" ? "home" : "away"].score) || 0
-    return mine > other
+  function leads(game, side) { return Model.leads(game, side) }
+  function titleize(s) { return Model.titleize(s) }
+  function sundayOf(d) { return Model.sundayOf(d) }
+  function ymd(d) { return Model.ymd(d) }
+  function weekLabel() { return Model.weekLabel(root.weekDates) }
+  function dayLabel() { return Model.dayLabel(root.selectedDate) }
+  function leagueLabel(id) { return Model.leagueFor(id).label }
+  function setLeague(id) {
+    if (id == root.currentLeagueId) return
+    root.currentLeagueId = id
+    root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    root.games = []; root.lastError = ""
+    if (root.isWeekMode) root.initWeek(); else root.initDay()
   }
-
-  function titleize(s) {
-    var t = String(s || "").trim()
-    if (!t) return ""
-    return t.split(/[\s_\/]+/).map(function(w){ return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() }).join(" ")
+  function initDay() {
+    var today = new Date(); today.setHours(0,0,0,0)
+    var d = Model.dayDataFor(today)
+    root.selectedDate = d.selectedDate; root.selectedDateStr = d.selectedDateStr
+    root.refreshSelected()
   }
-
-  function sundayOf(d) {
-    var nd = new Date(d)
-    nd.setHours(0, 0, 0, 0)
-    nd.setDate(nd.getDate() - nd.getDay())
-    return nd
-  }
-
-  function ymd(d) {
-    var y = d.getFullYear(), m = d.getMonth() + 1, dd = d.getDate()
-    return y + (m < 10 ? "0" + m : m) + (dd < 10 ? "0" + dd : dd)
-  }
-
-  function weekLabel() {
-    if (!root.weekDates || root.weekDates.length !== 7) return ""
-    var s = root.weekDates[0], e = root.weekDates[6]
-    var sm = root.monthLabels[s.getMonth()], em = root.monthLabels[e.getMonth()]
-    if (s.getMonth() === e.getMonth()) return sm + " " + s.getDate() + " \u2013 " + e.getDate()
-    return sm + " " + s.getDate() + " \u2013 " + em + " " + e.getDate()
+  function shiftDay(delta) {
+    if (!root.selectedDate) return
+    var d = Model.shiftDay(root.selectedDate, delta)
+    root.selectedDate = d.selectedDate; root.selectedDateStr = d.selectedDateStr
+    root.refreshSelected()
   }
 
   function initWeek() {
-    var today = new Date()
-    today.setHours(0, 0, 0, 0)
-    var s = root.sundayOf(today)
-    root.weekStart = s
-    var dates = [], strs = []
-    for (var i = 0; i < 7; i++) {
-      var dd = new Date(s)
-      dd.setDate(s.getDate() + i)
-      dates.push(dd)
-      strs.push(root.ymd(dd))
-    }
-    root.weekDates = dates
-    root.weekDateStrs = strs
-    root.selectedDay = today.getDay()
+    var today = new Date(); today.setHours(0,0,0,0)
+    var w = Model.weekDataFor(today)
+    root.weekStart = w.weekStart; root.weekDates = w.weekDates; root.weekDateStrs = w.weekDateStrs; root.selectedDay = w.selectedDay
     root.hasGames = [false,false,false,false,false,false,false]
-    root.checkWeekGames()
-    root.refreshSelected()
+    root.checkWeekGames(); root.refreshSelected()
   }
-
   function shiftWeek(delta) {
     if (!root.weekStart) return
-    var ns = new Date(root.weekStart)
-    ns.setDate(ns.getDate() + delta)
-    root.weekStart = ns
-    var dates = [], strs = []
-    for (var i = 0; i < 7; i++) {
-      var dd = new Date(ns)
-      dd.setDate(ns.getDate() + i)
-      dates.push(dd)
-      strs.push(root.ymd(dd))
-    }
-    root.weekDates = dates
-    root.weekDateStrs = strs
-    var today = new Date()
-    today.setHours(0, 0, 0, 0)
-    var tStr = root.ymd(today)
-    var idx = strs.indexOf(tStr)
-    root.selectedDay = idx >= 0 ? idx : 0
+    var today = new Date(); today.setHours(0,0,0,0)
+    var w = Model.weekDataShift(root.weekStart, delta, today)
+    root.weekStart = w.weekStart; root.weekDates = w.weekDates; root.weekDateStrs = w.weekDateStrs; root.selectedDay = w.selectedDay
     root.hasGames = [false,false,false,false,false,false,false]
-    root.checkWeekGames()
-    root.refreshSelected()
+    root.checkWeekGames(); root.refreshSelected()
   }
-
-  function selectDay(idx) {
-    if (idx < 0 || idx > 6) return
-    root.selectedDay = idx
-    root.refreshSelected()
-  }
-
+  function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.refreshSelected() }
   function checkWeekGames() {
+    if (!root.isWeekMode) return
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
-    var cmd = "for d in " + root.weekDateStrs.join(" ") + "; do c=$(curl -fsS --max-time 5 '" + root.apiUrl + "?dates='\"$d\" 2>/dev/null | jq -r '.events | length' 2>/dev/null); [ -z \"$c\" ] && c=0; echo \"$d:$c\"; done"
-    weekProc.command = ["bash", "-c", cmd]
-    weekProc.running = true
+    var cmd = Model.weekCurl(root.weekDateStrs, root.currentLeagueId)
+    weekProc.running = false; weekProc.command = ["bash","-c",cmd]; weekProc.running = true
   }
-
   function parseWeek(raw) {
-    var txt = String(raw || "").trim()
-    if (!txt) return
-    var lines = txt.split("\n")
-    var arr = [false,false,false,false,false,false,false]
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim()
-      if (!line) continue
-      var parts = line.split(":")
-      if (parts.length < 2) continue
-      var d = parts[0], c = parseInt(parts[1]) || 0
-      var idx = root.weekDateStrs.indexOf(d)
-      if (idx >= 0) arr[idx] = c > 0
-    }
-    root.hasGames = arr
+    if (!String(raw||"").trim()) return
+    var r = Model.parseWeek(raw, root.weekDateStrs)
+    root.hasGames = r.hasGames
+    var nxt = Model.nextSelectedDay(r.hasGames, root.selectedDay)
+    if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
   }
-
   function refreshSelected() {
-    if (!root.weekDateStrs || !root.weekDateStrs[root.selectedDay]) return
-    var ds = root.weekDateStrs[root.selectedDay]
-    fetchProc.command = ["bash", "-c", "curl -fsS --max-time 10 '" + root.apiUrl + "?dates='\""+ds+"\" 2>/dev/null | tee /tmp/nfl-scores.json"]
-    fetchProc.running = true
+    var ds = root.isWeekMode ? (root.weekDateStrs[root.selectedDay] || "") : root.selectedDateStr
+    if (!ds) return
+    fetchProc.running = false; fetchProc.command = ["bash","-c", Model.fetchCurl(ds, root.currentLeagueId)]; fetchProc.running = true
   }
-
   function showDetail(game) {
     if (!game || !game.id) return
-    root.selectedGame = game
-    root.detailStats = null
-    root.detailTeams = null
-    root.detailPlayers = null
-    root.detailPlayerGroups = null
-    root.detailError = ""
-    root.detailLoading = true
-    root.detailTab = 0
-    var id = game.id
-    detailProc.command = ["bash", "-c", "curl -fsS --max-time 10 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=" + id + "' 2>/dev/null"]
-    detailProc.running = true
+    root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    root.detailError = ""; root.detailLoading = true; root.detailTab = 0
+    detailProc.running = false; detailProc.command = ["bash","-c","curl -fsS --max-time 10 '" + Model.summaryUrl(game.id, root.currentLeagueId) + "' 2>/dev/null"]; detailProc.running = true
   }
-
   function closeDetail() {
-    root.selectedGame = null
-    root.detailStats = null
-    root.detailTeams = null
-    root.detailPlayers = null
-    root.detailPlayerGroups = null
-    root.detailError = ""
-    root.detailLoading = false
+    root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    root.detailError = ""; root.detailLoading = false; root.detailStale = false
   }
-
+  function loadDetail() { root.detailStale = false; root.detailError = ""; if (root.selectedGame) root.showDetail(root.selectedGame) }
   function parseDetail(raw) {
-    var txt = String(raw || "").trim()
+    var txt = String(raw||"").trim()
     if (!txt) { root.detailError = "No details"; root.detailLoading = false; return }
     try {
-      var d = JSON.parse(txt)
-      var header = d.header || {}
-      var comp = header.competitions && header.competitions[0]
-      if (!comp) { root.detailError = "No details"; root.detailLoading = false; return }
-      var box = d.boxscore || {}
-      var teams = box.teams || []
-      var away = root.selectedGame ? root.selectedGame.away : null
-      var home = root.selectedGame ? root.selectedGame.home : null
-      var awayId = away ? away.id : null, homeId = home ? home.id : null
-      var tAway = null, tHome = null
-      for (var i = 0; i < teams.length; i++) {
-        var t = teams[i]
-        var tid = t.team ? t.team.id : null
-        var abbr = t.team ? t.team.abbreviation : null
-        if (tid && awayId && String(tid) === String(awayId)) tAway = t
-        else if (abbr && away && abbr === away.abbr) tAway = t
-        else if (tid && homeId && String(tid) === String(homeId)) tHome = t
-        else if (abbr && home && abbr === home.abbr) tHome = t
-      }
-      if (!tAway && teams.length > 0) tAway = teams[0]
-      if (!tHome && teams.length > 1) tHome = teams[1]
-      var statsA = tAway ? tAway.statistics || [] : []
-      var statsH = tHome ? tHome.statistics || [] : []
-      var paired = []
-      var mapH = {}
-      for (var j = 0; j < statsH.length; j++) mapH[statsH[j].name] = statsH[j]
-      for (var k = 0; k < statsA.length; k++) {
-        var sA = statsA[k]
-        var sH = mapH[sA.name]
-        paired.push({ label: sA.label || sA.name, away: sA.displayValue || sA.value, home: sH ? (sH.displayValue || sH.value) : "-" })
-      }
-      if (paired.length === 0) {
-        var compAway = null, compHome = null
-        for (var c = 0; c < comp.competitors.length; c++) {
-          if (comp.competitors[c].homeAway === "away") compAway = comp.competitors[c]
-          else compHome = comp.competitors[c]
-        }
-        if (compAway && compHome) {
-          var qtrs = Math.max(compAway.linescores ? compAway.linescores.length : 0, compHome.linescores ? compHome.linescores.length : 0)
-          for (var q = 0; q < qtrs; q++) {
-            var la = compAway.linescores && compAway.linescores[q] ? compAway.linescores[q].displayValue : "-"
-            var lh = compHome.linescores && compHome.linescores[q] ? compHome.linescores[q].displayValue : "-"
-            paired.push({ label: "Q" + (q+1), away: la, home: lh })
-          }
-          paired.push({ label: "Total", away: compAway.score || "0", home: compHome.score || "0" })
-          if (compAway.records && compAway.records[0]) paired.push({ label: "Record", away: compAway.records[0].summary, home: compHome.records && compHome.records[0] ? compHome.records[0].summary : "-" })
-        }
-      }
-      // venue and status// venue and status
-      var venue = comp.venue ? (comp.venue.fullName || "") : ""
-      var addr = ""
-      if (comp.venue && comp.venue.address) addr = comp.venue.address.city + (comp.venue.address.state ? ", " + comp.venue.address.state : "")
-      root.detailTeams = { away: away, home: home, venue: venue, addr: addr, status: comp.status ? comp.status.type.detail : "" }
-      root.detailStats = paired
-      root.detailPlayers = box.players || null
-      // Build grouped player stats for the Players tab (unified by stat name)
-      var groups = []
-      var groupMap = {}
-      var order = []
-      if (box.players) {
-        for (var pi = 0; pi < box.players.length; pi++) {
-          var teamEntry = box.players[pi]
-          var tAbbr = teamEntry.team ? teamEntry.team.abbreviation : ""
-          var isAway = away && tAbbr === away.abbr
-          var isHome = home && tAbbr === home.abbr
-          var stats = teamEntry.statistics || []
-          for (var si = 0; si < stats.length; si++) {
-            var s = stats[si]
-            var gname = s.name || s.text || ""
-            if (!gname) continue
-            if (!groupMap[gname]) {
-              groupMap[gname] = { name: gname, displayName: s.displayName || s.shortDisplayName || gname, labels: s.labels || s.keys || [], keys: s.keys || [], away: [], home: [] }
-              order.push(gname)
-            }
-            var list = s.athletes || []
-            if (isAway) groupMap[gname].away = list
-            else if (isHome) groupMap[gname].home = list
-            else {
-              if (pi === 0) groupMap[gname].away = list
-              else groupMap[gname].home = list
-            }
-            // Prefer labels from any entry
-            if ((!groupMap[gname].labels || groupMap[gname].labels.length === 0) && s.labels) groupMap[gname].labels = s.labels
-          }
-        }
-        for (var gi = 0; gi < order.length; gi++) groups.push(groupMap[order[gi]])
-      }
-      root.detailPlayerGroups = groups
-      console.log("detail", id, "players", box.players ? box.players.length : 0, "groups", groups.length, "stats", paired.length)
+      var r = Model.parseDetail(raw, root.selectedGame, root.currentLeagueId)
+      root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
       root.detailLoading = false
     } catch (e) {
-      root.detailError = "Failed to load"
+      console.log("parseDetail failed", String(e))
+      if (!root.detailStale) { root.detailError = "Stale data"; root.detailStale = true } else { root.detailError = "Failed to load: " + String(e.message || e) }
       root.detailLoading = false
     }
   }
-
-  function refresh() {
-    root.refreshSelected()
-  }
-
+  function refresh() { root.refreshSelected() }
   function parseGames(raw) {
-    var parsed = String(raw || "").trim()
-    if (!parsed) {
-      root.games = []
-      root.lastError = ""
-      root.recount()
-      return
-    }
+    var txt = String(raw||"").trim()
+    if (!txt) { root.games = []; root.lastError = ""; root.recount(); return }
     try {
-      var data = JSON.parse(parsed)
-      var events = data.events || []
-      var out = []
-      for (var i = 0; i < events.length; i++) {
-        var ev = events[i]
-        var comp = ev.competitions && ev.competitions[0]
-        if (!comp) continue
-        var g = {
-          id: ev.id,
-          state: ev.status.type.state,
-          detail: ev.status.type.shortDetail,
-          away: null,
-          home: null
-        }
-        var cs = comp.competitors || []
-        for (var j = 0; j < cs.length; j++) {
-          var c = cs[j]
-          g[c.homeAway] = { id: c.team.id, abbr: c.team.abbreviation, name: c.team.displayName, score: c.score, logo: c.team.logo, color: c.team.color, record: c.records && c.records[0] ? c.records[0].summary : "" }
-        }
-        if (g.away && g.home) out.push(g)
-      }
-      root.games = root.sorted(out)
-      root.lastError = events.length ? "" : "No games scheduled"
+      var r = Model.parseGames(txt)
+      root.games = root.sorted(r.games)
+      root.lastError = r.error
       root.recount()
-    } catch (e) {
-      root.lastError = "Parse error"
-    }
+    } catch (e) { root.lastError = "Parse error" }
   }
-
-  function statusColor(state) {
-    if (state === "in") return root.urgentColor
-    return root.barForeground
-  }
+  function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
 
   FileView {
     id: store
@@ -395,11 +177,36 @@ Panel {
     printErrors: false
     onLoaded: {
       root.loadFavorites(text())
+      if (Object.keys(root.favorites).length == 0) oldStore.reload()
       root.games = root.sorted(root.games)
       root.recount()
     }
-    onLoadFailed: root.loadFavorites("[]")
+    onLoadFailed: {
+      root.loadFavorites("{}")
+      oldStore.reload()
+    }
     onFileChanged: reload()
+  }
+  FileView {
+    id: oldStore
+    path: root.oldStorePath
+    watchChanges: false
+    atomicWrites: false
+    printErrors: false
+    onLoaded: {
+      var txt = text() || ""
+      if (!txt.trim()) return
+      if (Object.keys(root.favorites).length != 0) return
+      try {
+        var arr = JSON.parse(txt)
+        if (Array.isArray(arr) && arr.length) {
+          root.favorites = { nfl: arr }
+          root.saveFavorites()
+          root.games = root.sorted(root.games)
+          root.recount()
+        }
+      } catch(e) {}
+    }
   }
 
   Process {
@@ -434,9 +241,13 @@ Panel {
     onTriggered: root.refresh()
   }
 
-  Component.onCompleted: Qt.callLater(root.initWeek)
+  function initForCurrent() { if (root.isWeekMode) root.initWeek(); else root.initDay() }
+  Component.onCompleted: Qt.callLater(root.initForCurrent)
 
-  onOpenedChanged: if (root.opened) { if (!root.weekStart) root.initWeek(); else root.refreshSelected() }
+  onOpenedChanged: if (root.opened) {
+    if (root.isWeekMode) { if (!root.weekStart) root.initWeek(); else root.refreshSelected() }
+    else { if (!root.selectedDate) root.initDay(); else root.refreshSelected() }
+  }
 
   KeyboardPanel {
     id: panel
@@ -445,8 +256,10 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(760))
+    contentWidth: panel.fittedContentWidth(Style.space(root.selectedGame ? 760 : 440))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
+    Behavior on contentWidth { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+    Behavior on contentHeight { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
       PanelKeyCatcher {
         id: keyCatcher
@@ -459,12 +272,13 @@ Panel {
         anchors.fill: parent
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: root.selectedGame ? ScrollBar.AlwaysOff : (panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff)
 
         Column {
           id: panelColumn
-          width: scrollArea.availableWidth - Style.space(20)
+          width: scrollArea.availableWidth - Style.space(28)
           anchors.horizontalCenter: parent.horizontalCenter
+          anchors.horizontalCenterOffset: Style.space(4)
           spacing: Style.space(14)
 
           Item {
@@ -472,7 +286,7 @@ Panel {
             implicitHeight: heroIcon.implicitHeight
             Text {
               id: heroIcon
-              text: "\uD83C\uDFC8"
+              text: "\uD83C\uDFC6"
               color: root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.display
@@ -480,7 +294,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-              text: "NFL Scores"
+              text: "OmaScore"
               color: root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.title
@@ -491,11 +305,64 @@ Panel {
             }
           }
 
+          Flickable {
+            width: parent.width
+            height: Style.space(32)
+            visible: !root.selectedGame
+            clip: true
+            flickableDirection: Flickable.HorizontalFlick
+            contentWidth: leagueRow.implicitWidth
+            contentHeight: height
+            boundsBehavior: Flickable.StopAtBounds
+            Row {
+              id: leagueRow
+              spacing: Style.space(6)
+              height: parent.height
+              Repeater {
+                model: Model.sortedLeagues(Model.leagues, root.favorites)
+                delegate: Rectangle {
+                  required property var modelData
+                  width: row.implicitWidth + Style.space(16)
+                  height: Style.space(28)
+                  radius: Style.space(14)
+                  color: root.currentLeagueId == modelData.id ? Color.accent : "transparent"
+                  border.width: root.currentLeagueId == modelData.id ? 0 : 1
+                  border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                  Row {
+                    id: row
+                    anchors.centerIn: parent
+                    spacing: Style.space(4)
+                    z: 1
+                    Text {
+                      id: leagueText
+                      text: modelData.label
+                      color: root.currentLeagueId == modelData.id ? Color.background : root.barForeground
+                      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                      font.pixelSize: Style.font.caption
+                      font.bold: root.currentLeagueId == modelData.id
+                    }
+                    Text {
+                      text: root.isLeagueFav(modelData.id) ? "\u2605" : "\u2606"
+                      color: root.isLeagueFav(modelData.id) ? Color.accent : root.barForeground
+                      opacity: root.isLeagueFav(modelData.id) ? 1 : 0.5
+                      font.pixelSize: Style.font.caption
+                      MouseArea {
+                        anchors.fill: parent
+                        onClicked: function(mouse) { root.toggleLeagueFav(modelData.id); mouse.accepted = true }
+                      }
+                    }
+                  }
+                  MouseArea { anchors.fill: parent; onClicked: root.setLeague(modelData.id) }
+                }
+              }
+            }
+          }
+
           RowLayout {
             width: parent.width - Style.space(20)
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(4)
-            visible: root.weekDates.length === 7 && !root.selectedGame
+            visible: root.isWeekMode && root.weekDates.length === 7 && !root.selectedGame
 
             Button {
               Layout.preferredWidth: Style.space(28)
@@ -579,7 +446,41 @@ Panel {
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
-            visible: root.weekDates.length === 7 && !root.selectedGame
+            visible: root.isWeekMode && root.weekDates.length === 7 && !root.selectedGame
+          }
+
+          RowLayout {
+            width: parent.width - Style.space(20)
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(8)
+            visible: !root.isWeekMode && !root.selectedGame
+            Button {
+              Layout.preferredWidth: Style.space(28)
+              Layout.preferredHeight: Style.space(28)
+              iconText: "\u2039"
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.shiftDay(-1)
+            }
+            Text {
+              Layout.fillWidth: true
+              horizontalAlignment: Text.AlignHCenter
+              text: root.dayLabel()
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+            Button {
+              Layout.preferredWidth: Style.space(28)
+              Layout.preferredHeight: Style.space(28)
+              iconText: "\u203A"
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.shiftDay(1)
+            }
           }
 
           Text {
@@ -658,6 +559,8 @@ Panel {
                   font.pixelSize: Style.font.body
                   font.bold: modelData && root.leads(modelData, "away")
                   elide: Text.ElideRight
+                  HoverHandler { id: hoverGameAway }
+                  PanelToolTip { visible: hoverGameAway.hovered && parent.truncated; text: parent.text }
                 }
                 Text {
                   text: modelData && modelData.away ? modelData.away.score || "-" : "-"
@@ -708,6 +611,8 @@ Panel {
                   font.pixelSize: Style.font.body
                   font.bold: modelData && root.leads(modelData, "home")
                   elide: Text.ElideRight
+                  HoverHandler { id: hoverGameHome }
+                  PanelToolTip { visible: hoverGameHome.hovered && parent.truncated; text: parent.text }
                 }
                 Text {
                   text: modelData && modelData.home ? modelData.home.score || "-" : "-"
@@ -719,6 +624,8 @@ Panel {
               }
 
               Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignRight
                 text: modelData ? modelData.detail : ""
                 color: modelData ? root.statusColor(modelData.state) : root.barForeground
                 opacity: modelData && modelData.state === "in" ? 1.0 : 0.6
@@ -800,6 +707,8 @@ Panel {
                   elide: Text.ElideRight
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
+                  HoverHandler { id: hoverDetailAway }
+                  PanelToolTip { visible: hoverDetailAway.hovered && parent.truncated; text: parent.text }
                 }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
@@ -856,6 +765,8 @@ Panel {
                   elide: Text.ElideRight
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
+                  HoverHandler { id: hoverDetailHome }
+                  PanelToolTip { visible: hoverDetailHome.hovered && parent.truncated; text: parent.text }
                 }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
@@ -954,11 +865,19 @@ Panel {
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.bodySmall
             }
+            Button {
+              visible: root.detailStale
+              text: "Retry"
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.loadDetail()
+            }
 
             ScrollView {
               id: detailStatsScroll
               width: parent.width
-              height: Math.min(detailStatsContent.implicitHeight, Style.space(380))
+              height: root.selectedGame ? Math.max(Style.space(220), Math.min(detailStatsContent.implicitHeight, scrollArea.height - Style.space(320))) : Math.min(detailStatsContent.implicitHeight, Style.space(380))
               clip: true
               visible: !root.detailLoading && root.detailError === ""
               ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -1001,11 +920,13 @@ Panel {
               Repeater {
                 model: root.detailPlayerGroups
                 delegate: Column {
-                  required property var groupData
+                  required property var modelData
+                  property var groupData: modelData
                   width: parent.width
                   spacing: Style.space(6)
                   Text {
                     width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
                     text: root.titleize(groupData.name || groupData.displayName || "")
                     color: root.barForeground
                     opacity: 0.9
@@ -1025,76 +946,92 @@ Panel {
                       Layout.leftMargin: Style.space(6)
                       Layout.rightMargin: Style.space(6)
                       spacing: Style.space(4)
-                      Rectangle {
+                      RowLayout {
                         width: parent.width
-                        height: Style.space(20)
-                        color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07)
-                        radius: 2
-                        Text {
-                          anchors.centerIn: parent
-                          text: "Player"
-                          font.bold: true
-                          font.pixelSize: Style.font.caption
-                          color: root.barForeground
-                          opacity: 0.8
-                        }
-                      }
-                      Repeater {
-                        model: groupData.away
-                        delegate: RowLayout {
-                          required property var athleteData
-                          width: parent.width
+                        spacing: Style.space(6)
+                        Column {
                           spacing: Style.space(6)
-                          Text {
-                            Layout.preferredWidth: Style.space(110)
-                            text: athleteData.athlete ? (athleteData.athlete.shortName || athleteData.athlete.displayName) : ""
-                            color: root.barForeground
-                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                            font.pixelSize: Style.font.caption
-                            elide: Text.ElideRight
-                          }
-                          // Stats as a single Flickable row
-                          Flickable {
-                            Layout.fillWidth: true
+                          Rectangle {
+                            width: Style.space(110)
                             height: Style.space(20)
-                            contentWidth: statsRow.implicitWidth
-                            clip: true
+                            color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07)
+                            radius: 2
+                            Text {
+                              anchors.centerIn: parent
+                              text: "Player"
+                              font.bold: true
+                              font.pixelSize: Style.font.caption
+                              color: root.barForeground
+                              opacity: 0.8
+                            }
+                          }
+                          Repeater {
+                            model: groupData.away
+                            delegate: Text {
+                              required property var modelData
+                              property var athleteData: modelData
+                              width: Style.space(110)
+                              height: Style.space(20)
+                              verticalAlignment: Text.AlignVCenter
+                              text: athleteData.athlete ? (athleteData.athlete.shortName || athleteData.athlete.displayName) : ""
+                              color: root.barForeground
+                              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                              font.pixelSize: Style.font.caption
+                              elide: Text.ElideRight
+                              HoverHandler { id: hoverPlayerAway }
+                              PanelToolTip { visible: hoverPlayerAway.hovered && parent.truncated; text: parent.text }
+                            }
+                          }
+                        }
+                        Flickable {
+                          Layout.fillWidth: true
+                          Layout.fillHeight: true
+                          implicitHeight: flickAwayContent.implicitHeight
+                          clip: true
+                          flickableDirection: Flickable.HorizontalFlick
+                          contentWidth: flickAwayContent.implicitWidth
+                          contentHeight: flickAwayContent.implicitHeight
+                          Column {
+                            id: flickAwayContent
+                            spacing: Style.space(6)
                             Row {
-                              id: statsRow
                               spacing: Style.space(6)
                               Repeater {
-                                model: athleteData.stats
+                                model: groupData.labels || []
                                 delegate: Text {
                                   width: Style.space(55)
+                                  height: Style.space(20)
+                                  verticalAlignment: Text.AlignVCenter
                                   text: modelData
-                                  font.family: "Monospace"
+                                  font.bold: true
                                   font.pixelSize: Style.font.caption
                                   color: root.barForeground
+                                  opacity: 0.7
                                   horizontalAlignment: Text.AlignHCenter
                                 }
                               }
                             }
-                          }
-                        }
-                      }
-                      // Header for stats labels
-                      RowLayout {
-                        width: parent.width
-                        spacing: Style.space(6)
-                        Text {
-                          Layout.preferredWidth: Style.space(110)
-                          text: ""
-                        }
-                        Repeater {
-                          model: groupData.labels || []
-                          delegate: Text {
-                            Layout.preferredWidth: Style.space(55)
-                            text: modelData
-                            font.bold: true
-                            font.pixelSize: Style.font.caption
-                            color: root.barForeground
-                            opacity: 0.7
-                            horizontalAlignment: Text.AlignHCenter
+                            Repeater {
+                              model: groupData.away
+                              delegate: Row {
+                                required property var modelData
+                                property var athleteData: modelData
+                                spacing: Style.space(6)
+                                Repeater {
+                                  model: athleteData.stats
+                                  delegate: Text {
+                                    width: Style.space(55)
+                                    height: Style.space(20)
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: modelData
+                                    font.family: "Monospace"
+                                    font.pixelSize: Style.font.caption
+                                    color: root.barForeground
+                                    horizontalAlignment: Text.AlignHCenter
+                                  }
+                                }
+                              }
+                            }
                           }
                         }
                       }
@@ -1113,74 +1050,92 @@ Panel {
                       Layout.leftMargin: Style.space(6)
                       Layout.rightMargin: Style.space(6)
                       spacing: Style.space(4)
-                      Rectangle {
+                      RowLayout {
                         width: parent.width
-                        height: Style.space(20)
-                        color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07)
-                        radius: 2
-                        Text {
-                          anchors.centerIn: parent
-                          text: "Player"
-                          font.bold: true
-                          font.pixelSize: Style.font.caption
-                          color: root.barForeground
-                          opacity: 0.8
-                        }
-                      }
-                      Repeater {
-                        model: groupData.home
-                        delegate: RowLayout {
-                          required property var athleteData
-                          width: parent.width
+                        spacing: Style.space(6)
+                        Column {
                           spacing: Style.space(6)
-                          Text {
-                            Layout.preferredWidth: Style.space(110)
-                            text: athleteData.athlete ? (athleteData.athlete.shortName || athleteData.athlete.displayName) : ""
-                            color: root.barForeground
-                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                            font.pixelSize: Style.font.caption
-                            elide: Text.ElideRight
-                          }
-                          Flickable {
-                            Layout.fillWidth: true
+                          Rectangle {
+                            width: Style.space(110)
                             height: Style.space(20)
-                            contentWidth: statsRowH.implicitWidth
-                            clip: true
+                            color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07)
+                            radius: 2
+                            Text {
+                              anchors.centerIn: parent
+                              text: "Player"
+                              font.bold: true
+                              font.pixelSize: Style.font.caption
+                              color: root.barForeground
+                              opacity: 0.8
+                            }
+                          }
+                          Repeater {
+                            model: groupData.home
+                            delegate: Text {
+                              required property var modelData
+                              property var athleteData: modelData
+                              width: Style.space(110)
+                              height: Style.space(20)
+                              verticalAlignment: Text.AlignVCenter
+                              text: athleteData.athlete ? (athleteData.athlete.shortName || athleteData.athlete.displayName) : ""
+                              color: root.barForeground
+                              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                              font.pixelSize: Style.font.caption
+                              elide: Text.ElideRight
+                              HoverHandler { id: hoverPlayerHome }
+                              PanelToolTip { visible: hoverPlayerHome.hovered && parent.truncated; text: parent.text }
+                            }
+                          }
+                        }
+                        Flickable {
+                          Layout.fillWidth: true
+                          Layout.fillHeight: true
+                          implicitHeight: flickHomeContent.implicitHeight
+                          clip: true
+                          flickableDirection: Flickable.HorizontalFlick
+                          contentWidth: flickHomeContent.implicitWidth
+                          contentHeight: flickHomeContent.implicitHeight
+                          Column {
+                            id: flickHomeContent
+                            spacing: Style.space(6)
                             Row {
-                              id: statsRowH
                               spacing: Style.space(6)
                               Repeater {
-                                model: athleteData.stats
+                                model: groupData.labels || []
                                 delegate: Text {
                                   width: Style.space(55)
+                                  height: Style.space(20)
+                                  verticalAlignment: Text.AlignVCenter
                                   text: modelData
-                                  font.family: "Monospace"
+                                  font.bold: true
                                   font.pixelSize: Style.font.caption
                                   color: root.barForeground
+                                  opacity: 0.7
                                   horizontalAlignment: Text.AlignHCenter
                                 }
                               }
                             }
-                          }
-                        }
-                      }
-                      RowLayout {
-                        width: parent.width
-                        spacing: Style.space(6)
-                        Text {
-                          Layout.preferredWidth: Style.space(110)
-                          text: ""
-                        }
-                        Repeater {
-                          model: groupData.labels || []
-                          delegate: Text {
-                            Layout.preferredWidth: Style.space(55)
-                            text: modelData
-                            font.bold: true
-                            font.pixelSize: Style.font.caption
-                            color: root.barForeground
-                            opacity: 0.7
-                            horizontalAlignment: Text.AlignHCenter
+                            Repeater {
+                              model: groupData.home
+                              delegate: Row {
+                                required property var modelData
+                                property var athleteData: modelData
+                                spacing: Style.space(6)
+                                Repeater {
+                                  model: athleteData.stats
+                                  delegate: Text {
+                                    width: Style.space(55)
+                                    height: Style.space(20)
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: modelData
+                                    font.family: "Monospace"
+                                    font.pixelSize: Style.font.caption
+                                    color: root.barForeground
+                                    horizontalAlignment: Text.AlignHCenter
+                                  }
+                                }
+                              }
+                            }
                           }
                         }
                       }
