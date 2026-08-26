@@ -8,7 +8,7 @@ import qs.Commons
 
 Panel {
   id: root
-  moduleName: "chris.nfl"
+  moduleName: "slowburnaz.omascore"
   manageIpc: false
 
   property var anchorItem: null

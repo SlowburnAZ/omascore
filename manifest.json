@@ -1,12 +1,14 @@
 {
   "schemaVersion": 1,
-  "id": "chris.nfl",
+  "id": "slowburnaz.omascore",
   "name": "NFL Scores",
   "version": "1.0.0",
-  "author": "chris",
+  "author": "slowburnaz",
   "license": "MIT",
   "description": "Live NFL scores with favorited teams pinned to the top",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },

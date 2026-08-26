@@ -4,7 +4,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "chris.nfl"
+  moduleName: "slowburnaz.omascore"
 
   readonly property var panel: panelLoader.item
 
