@@ -28,6 +28,11 @@ Panel {
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
 
   property string currentLeagueId: Model.defaultLeagueId
+  property bool hideFinished: false
+  property var prevScores: ({})
+  readonly property var shownGames: root.hideFinished
+    ? root.games.filter(function(g) { return g.state !== "post" })
+    : root.games
   property var weekStart: null
   property var weekDateStrs: []
   property var weekDates: []
@@ -107,6 +112,7 @@ Panel {
     root.currentLeagueId = id
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.games = []; root.lastError = ""
+    root.prevScores = ({})
     root.initWeek()
   }
 
@@ -141,6 +147,7 @@ Panel {
   function refreshSelected() {
     var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
+    cacheStore.reload()
     fetchProc.running = false; fetchProc.command = ["bash","-c", Model.fetchCurl(ds, root.currentLeagueId)]; fetchProc.running = true
   }
   function showDetail(game) {
@@ -164,16 +171,14 @@ Panel {
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
       root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = r.detailStandings || null; root.detailInjuries = r.detailInjuries || []
       root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
-      console.log("omascore detail", root.currentLeagueId, root.selectedGame ? root.selectedGame.id : "", "plays", root.detailPlays.length, "drives", root.detailDrives.length, "groups", root.detailPlayerGroups ? root.detailPlayerGroups.length : -1, "leaders", root.detailLeaders.length, "standings", !!root.detailStandings, "venue", r.detailTeams.venue)
       root.detailLoading = false
     } catch (e) {
-      console.log("parseDetail failed", String(e))
       if (!root.detailStale) { root.detailError = "Stale data"; root.detailStale = true } else { root.detailError = "Failed to load: " + String(e.message || e) }
       root.detailLoading = false
     }
   }
   function refresh() { root.refreshSelected() }
-  function parseGames(raw) {
+  function parseGames(raw, silent) {
     var txt = String(raw||"").trim()
     if (!txt) { root.games = []; root.lastError = ""; root.recount(); return }
     try {
@@ -181,7 +186,25 @@ Panel {
       root.games = root.sorted(r.games)
       root.lastError = r.error
       root.recount()
+      if (!silent) root.checkScoreNotifications(r.games)
     } catch (e) { root.lastError = "Parse error" }
+  }
+  function checkScoreNotifications(games) {
+    var next = {}
+    for (var i = 0; i < games.length; i++) {
+      var g = games[i]
+      if (!g.away || !g.home) continue
+      var cur = (g.away.score || "") + "|" + (g.home.score || "")
+      next[g.id] = cur
+      if (root.prevScores[g.id] === undefined || root.prevScores[g.id] === cur) continue
+      if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
+      if (notifProc.running) continue
+      notifProc.command = ["notify-send", "-a", "OmaScore",
+        g.away.abbr + " " + g.away.score + " \u2014 " + g.home.abbr + " " + g.home.score,
+        root.leagueLabel(root.currentLeagueId) + " \u00b7 " + g.detail]
+      notifProc.running = true
+    }
+    root.prevScores = next
   }
   function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
   function standingsStat(entry, names) {
@@ -264,6 +287,13 @@ Panel {
       } catch(e) {}
     }
   }
+  FileView {
+    id: cacheStore
+    path: "/tmp/omascore-" + root.currentLeagueId + "-scores.json"
+    watchChanges: false
+    printErrors: false
+    onLoaded: if (root.games.length === 0) root.parseGames(text(), true)
+  }
 
   Process {
     id: fetchProc
@@ -288,6 +318,10 @@ Panel {
       waitForEnd: true
       onStreamFinished: root.parseDetail(text)
     }
+  }
+
+  Process {
+    id: notifProc
   }
 
   Timer {
@@ -357,6 +391,27 @@ Panel {
               anchors.left: heroIcon.right
               anchors.leftMargin: Style.space(14)
               anchors.verticalCenter: parent.verticalCenter
+            }
+            Rectangle {
+              id: finalsToggle
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              width: finalsText.implicitWidth + Style.space(16)
+              height: Style.space(24)
+              radius: Style.space(12)
+              color: root.hideFinished ? Color.accent : "transparent"
+              border.width: root.hideFinished ? 0 : 1
+              border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+              Text {
+                id: finalsText
+                anchors.centerIn: parent
+                text: root.hideFinished ? "Show finals" : "Hide finals"
+                color: root.hideFinished ? Color.background : root.barForeground
+                opacity: root.hideFinished ? 1 : 0.7
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+              }
+              MouseArea { anchors.fill: parent; onClicked: root.hideFinished = !root.hideFinished }
             }
           }
 
@@ -526,8 +581,19 @@ Panel {
             font.pixelSize: Style.font.body
           }
 
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "All games finished"
+            visible: root.games.length > 0 && root.shownGames.length === 0 && !root.selectedGame
+            color: root.barForeground
+            opacity: 0.5
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+          }
+
           Repeater {
-            model: root.games
+            model: root.shownGames
             visible: !root.selectedGame
 
             Column {

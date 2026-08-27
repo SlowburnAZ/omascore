@@ -35,8 +35,8 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 
 ### Navigation
 
-- **NFL / CFB (week mode)**: Dots under the day names indicate games for that day. Select a day to filter (`?dates=YYYYMMDD`), week shifts with **‹** / **›** buttons.
-- **NBA / MLB / NHL / Soccer (day mode)**: Single-day pager shows the current date, tap **‹** / **›** to move one day at a time.
+- All leagues share a **7-day selector** (Sun–Sat). Dots mark days with games; select a day to load its scores (`?dates=YYYYMMDD`).
+- Shift weeks with the **‹** / **›** buttons. On open, today is auto-selected — or, if today has no games, the next day that does.
 
 ## Remove
 
@@ -53,8 +53,15 @@ omarchy bar move slowburnaz.omascore --section right
 ## Dependencies
 
 - `curl` — all ESPN API calls run through it (preinstalled on Omarchy).
-- `magick` from ImageMagick (preinstalled on Omarchy) — converts WebP logos to PNG if needed.
-- `qslog` / `journalctl` — for debugging QML errors.
+- `jq` — counts games per day for the week-selector dots (preinstalled on Omarchy).
+
+## Debugging
+
+QML errors and plugin logs go to the systemd user journal:
+
+```sh
+journalctl --user -g "omascore" -f
+```
 
 ## screenshots
 
