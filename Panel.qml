@@ -1540,7 +1540,7 @@ Repeater {
                           width: parent.width
                           height: Style.space(20)
                           property bool isCurrent: (root.selectedGame && ((String(modelData.id) === String(root.selectedGame.away.id)) || (String(modelData.id) === String(root.selectedGame.home.id)))) || (modelData.team && root.selectedGame && (modelData.team.indexOf(root.selectedGame.away.abbr) >= 0 || modelData.team.indexOf(root.selectedGame.home.abbr) >= 0))
-                          color: isCurrent ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : (index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent")
+                          color: isCurrent ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : "transparent"
                           radius: 2
                           border.width: isCurrent ? 1 : 0
                           border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.35)
