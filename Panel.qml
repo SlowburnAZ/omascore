@@ -19,6 +19,40 @@ Panel {
   property var favorites: ({})
   property int liveCount: 0
   property bool favLive: false
+  readonly property var favLiveGame: {
+    for (var i = 0; i < root.games.length; i++) {
+      var g = root.games[i]
+      if (g.state === "in" && (root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) return g
+    }
+    return null
+  }
+  readonly property string favLiveScore: {
+    var g = root.favLiveGame
+    if (!g || !g.away || !g.home) return ""
+    return root.isFav(g.away.abbr)
+      ? g.away.abbr + " " + (g.away.score || "0") + "-" + (g.home.score || "0")
+      : g.home.abbr + " " + (g.home.score || "0") + "-" + (g.away.score || "0")
+  }
+  readonly property string favLiveLabel: {
+    var g = root.favLiveGame
+    return g ? g.away.abbr + " " + (g.away.score || "0") + " \u2014 " + g.home.abbr + " " + (g.home.score || "0") + " \u00b7 " + g.detail : ""
+  }
+  readonly property bool notifyEnabled: {
+    var w = root.hostWidget
+    if (!w || typeof w.setting !== "function") return true
+    var v = w.setting("notifications", true)
+    return v !== false && v !== "false"
+  }
+  function setNotify(on) {
+    var w = root.hostWidget
+    if (!w) return
+    var entry = { id: w.moduleName }
+    for (var k in w.settings) if (k !== "id") entry[k] = w.settings[k]
+    entry.notifications = on
+    w.settings = entry
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(w.moduleName, entry)
+  }
   property string lastError: ""
 
   readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
@@ -29,10 +63,12 @@ Panel {
 
   property string currentLeagueId: Model.defaultLeagueId
   property bool hideFinished: false
+  property bool showSettings: false
   property var prevScores: ({})
   readonly property var shownGames: root.hideFinished
     ? root.games.filter(function(g) { return g.state !== "post" })
     : root.games
+  readonly property bool listVisible: root.selectedGame === null && !root.showSettings
   property var weekStart: null
   property var weekDateStrs: []
   property var weekDates: []
@@ -196,6 +232,7 @@ Panel {
       if (!g.away || !g.home) continue
       var cur = (g.away.score || "") + "|" + (g.home.score || "")
       next[g.id] = cur
+      if (!root.notifyEnabled) continue
       if (root.prevScores[g.id] === undefined || root.prevScores[g.id] === cur) continue
       if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
       if (notifProc.running) continue
@@ -353,7 +390,7 @@ Panel {
       PanelKeyCatcher {
         id: keyCatcher
         anchors.fill: parent
-        onCloseRequested: { if (root.selectedGame) root.closeDetail(); else root.close() }
+        onCloseRequested: { if (root.showSettings) root.showSettings = false; else if (root.selectedGame) root.closeDetail(); else root.close() }
         onTabRequested: function(direction) { if (root.selectedGame) root.closeDetail(); else root.switchPanel(direction) }
 
       ScrollView {
@@ -392,33 +429,26 @@ Panel {
               anchors.leftMargin: Style.space(14)
               anchors.verticalCenter: parent.verticalCenter
             }
-            Rectangle {
-              id: finalsToggle
+            Button {
+              id: settingsButton
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              width: finalsText.implicitWidth + Style.space(16)
-              height: Style.space(24)
-              radius: Style.space(12)
-              color: root.hideFinished ? Color.accent : "transparent"
-              border.width: root.hideFinished ? 0 : 1
-              border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
-              Text {
-                id: finalsText
-                anchors.centerIn: parent
-                text: root.hideFinished ? "Show finals" : "Hide finals"
-                color: root.hideFinished ? Color.background : root.barForeground
-                opacity: root.hideFinished ? 1 : 0.7
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.caption
+              iconText: "\uf013"
+              foreground: root.showSettings ? Color.accent : root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: {
+                if (root.showSettings) { root.showSettings = false; return }
+                root.showSettings = true
+                root.closeDetail()
               }
-              MouseArea { anchors.fill: parent; onClicked: root.hideFinished = !root.hideFinished }
             }
           }
 
           Flickable {
             width: parent.width
             height: Style.space(32)
-            visible: !root.selectedGame
+            visible: root.listVisible
             clip: true
             flickableDirection: Flickable.HorizontalFlick
             contentWidth: leagueRow.implicitWidth
@@ -472,7 +502,7 @@ Panel {
             width: parent.width - Style.space(20)
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(4)
-            visible: root.weekDates.length === 7 && !root.selectedGame
+            visible: root.weekDates.length === 7 && root.listVisible
 
             Button {
               Layout.preferredWidth: Style.space(28)
@@ -556,14 +586,14 @@ Panel {
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
-            visible: root.weekDates.length === 7 && !root.selectedGame
+            visible: root.weekDates.length === 7 && root.listVisible
           }
 
           Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: root.lastError
-            visible: root.lastError !== "" && root.games.length === 0 && !root.selectedGame
+            visible: root.lastError !== "" && root.games.length === 0 && root.listVisible
             color: root.urgentColor
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
@@ -574,7 +604,7 @@ Panel {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: "Loading scores\u2026"
-            visible: root.games.length === 0 && root.lastError === "" && !root.selectedGame
+            visible: root.games.length === 0 && root.lastError === "" && root.listVisible
             color: root.barForeground
             opacity: 0.6
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -585,7 +615,7 @@ Panel {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: "All games finished"
-            visible: root.games.length > 0 && root.shownGames.length === 0 && !root.selectedGame
+            visible: root.games.length > 0 && root.shownGames.length === 0 && root.listVisible
             color: root.barForeground
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -594,11 +624,11 @@ Panel {
 
           Repeater {
             model: root.shownGames
-            visible: !root.selectedGame
+            visible: root.listVisible
 
             Column {
               required property var modelData
-              visible: !root.selectedGame
+              visible: root.listVisible
               width: parent.width
               spacing: Style.space(4)
 
@@ -724,6 +754,57 @@ Panel {
               PanelSeparator { foreground: root.barForeground }
             }
           }
+          Column {
+            visible: root.showSettings
+            width: parent.width
+            spacing: Style.space(12)
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+              Button {
+                iconText: "\u2039"
+                text: "Back"
+                foreground: root.barForeground
+                accent: Color.accent
+                fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                onClicked: root.showSettings = false
+              }
+              Text {
+                Layout.fillWidth: true
+                text: "Settings"
+                horizontalAlignment: Text.AlignRight
+                color: root.barForeground
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+                elide: Text.ElideRight
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Score notifications"
+              description: "Notify when a favorited team's score changes"
+              checked: root.notifyEnabled
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.setNotify(!root.notifyEnabled)
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Hide finished games"
+              description: "Hide games that have already ended"
+              checked: root.hideFinished
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.hideFinished = !root.hideFinished
+            }
+          }
+
           Column {
             visible: root.selectedGame !== null
             width: parent.width
@@ -895,6 +976,16 @@ Panel {
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
+            }
+            Text {
+              visible: root.detailTeams && root.detailTeams.situation !== ""
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: root.detailTeams ? root.detailTeams.situation : ""
+              color: Color.accent
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: true
             }
             PanelSeparator { foreground: root.barForeground; visible: (root.detailStats && root.detailStats.length > 0) || (root.detailPlayers && root.detailPlayers.length > 0) }
 

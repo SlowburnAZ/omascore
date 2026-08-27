@@ -342,11 +342,38 @@ function parseDetail(raw, selectedGame, leagueId) {
         var dr2 = d.drives.previous || d.drives.drives || []
         if (dr2.length && dr2[0].plays) detailDrives = dr2.slice()
     }
+    // live NFL/CFB situation: down & distance + ball spot from the current drive
+    var sit = ""
+    var sitLeague = leagueId ? leagueFor(leagueId) : leagueFor(defaultLeagueId)
+    if (sitLeague.sport === "football" && stType.state === "in") {
+        var cur = (d.drives && d.drives.current) ? d.drives.current : null
+        var curPlays = (cur && cur.plays) ? cur.plays : []
+        var srcPlay = curPlays.length ? curPlays[curPlays.length - 1] : (detailPlays.length ? detailPlays[detailPlays.length - 1] : null)
+        var validSit = function(s) { return s && s.down >= 1 && s.down <= 4 && s.distance >= 1 && (s.yardsToEndzone || 0) > 0 }
+        var src = null
+        var scan = curPlays.length ? curPlays : detailPlays
+        for (var si = scan.length - 1; si >= 0 && si >= scan.length - 3 && !src; si--) {
+            if (validSit(scan[si].end)) src = scan[si].end
+            else if (validSit(scan[si].start)) src = scan[si].start
+        }
+        if (src) {
+            var abbr = (cur && cur.team && cur.team.abbreviation) ? cur.team.abbreviation : ""
+            var opp = (abbr && away && home) ? ((abbr === away.abbr) ? home.abbr : away.abbr) : ""
+            var ord = ["", "1st", "2nd", "3rd", "4th"][src.down] || String(src.down)
+            var distTxt = (src.yardsToEndzone <= src.distance) ? "Goal" : String(src.distance)
+            var yl = src.yardLine || 0
+            var ylTxt = ""
+            if (yl === 50) ylTxt = "50"
+            else if (abbr && opp && yl > 50) ylTxt = opp + " " + (100 - yl)
+            else if (abbr && yl > 0 && yl < 50) ylTxt = abbr + " " + yl
+            sit = (abbr ? abbr + " " : "") + ord + " & " + distTxt + (ylTxt ? " at " + ylTxt : "")
+        }
+    }
     var detailInjuries = d.injuries || []
     var detailStandings = d.standings || null
     var detailNews = (d.news && d.news.articles) ? d.news.articles.slice(0, 3) : []
     var detailVideos = d.videos ? d.videos.slice(0, 2) : []
-    var detailTeams = { away: away, home: home, venue: venue, addr: addr, status: stType.detail || "" }
+    var detailTeams = { away: away, home: home, venue: venue, addr: addr, status: stType.detail || "", situation: sit }
     var detailPlayers = box.players || null
     var rosters = d.rosters || null
     var groups = [], groupMap = {}, order = []

@@ -25,10 +25,12 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 - The bar widget shows live game scores with favorite teams highlighted in accent color.
 - Tap a game to open the **details panel** with full stats, venue, and player lists.
 - Use the **league switcher** pills at the top to change between NFL, CFB, NBA, WNBA, NCAAM, NCAAW, MLB, NHL, MLS, EPL, LaLiga, Bundesliga, Serie A, Ligue 1, UCL.
+- Score changes for favorited teams raise a desktop notification — toggle it and **Hide finished games** in the panel's **Settings** screen (gear icon, top right of the panel header), or `omarchy bar set slowburnaz.omascore notifications false`.
 
 ### Details Panel
 
 - **Overall tab**: Team statistics split by home/away with a vertical divider (labels are league-specific).
+- **Live situation**: for NFL/CFB games in progress, the current down & distance and ball spot render in accent under the venue line.
 - **Players tab**: Player statistics grouped by category with a fixed 110px Player column and horizontally scrollable stat columns.
 - **Favorites**: Teams saved per-league to `~/.local/state/omarchy/omascore-favorites.json` (migrated from old `nfl-favorites.json`) appear pinned at the top of the game list, above live games. Mirrored to `~/.config/omarchy/omascore-favorites.json` so `omarchy plugin disable` / `remove` + `add`/`enable` persists unless you delete both files.
 - **Logos**: Team logos loaded from ESPN network sources (transparent PNG).

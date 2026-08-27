@@ -54,15 +54,19 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uf091"
+    text: root.panel && root.panel.favLive && root.panel.favLiveScore !== "" && !button.vertical
+      ? "\u2605 " + root.panel.favLiveScore
+      : "\uf091"
     dimmed: !root.panel || root.panel.games.length === 0
     active: root.panel ? root.panel.favLive : false
     foreground: root.panel && root.panel.favLive ? Color.accent : Color.foreground
     tooltipText: !root.panel || root.panel.games.length === 0
       ? "OmaScore"
-      : (root.panel.liveCount > 0
-           ? root.panel.liveCount + " live" + (root.panel.favLive ? " — favorite playing" : "")
-           : "OmaScore")
+      : (root.panel.favLive && root.panel.favLiveLabel !== ""
+           ? root.panel.favLiveLabel
+           : (root.panel.liveCount > 0
+                ? root.panel.liveCount + " live"
+                : "OmaScore"))
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
     }
