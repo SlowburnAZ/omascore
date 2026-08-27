@@ -33,7 +33,6 @@ function leagueFor(id) {
     for (var i = 0; i < leagues.length; i++) if (leagues[i].id === id) return leagues[i]
     return leagues[0]
 }
-function leagueMode(id) { return leagueFor(id).mode }
 function apiUrlFor(sport, league) { return "https://site.api.espn.com/apis/site/v2/sports/" + sport + "/" + league + "/scoreboard" }
 function summaryBaseFor(sport, league) { return "https://site.api.espn.com/apis/site/v2/sports/" + sport + "/" + league + "/summary" }
 
@@ -63,19 +62,6 @@ function weekDataShift(weekStart, delta, today) {
     for (var i = 0; i < 7; i++) { var dd = new Date(ns); dd.setDate(ns.getDate() + i); dates.push(dd); strs.push(ymd(dd)) }
     var idx = strs.indexOf(ymd(today))
     return { weekStart: ns, weekDates: dates, weekDateStrs: strs, selectedDay: idx >= 0 ? idx : 0 }
-}
-
-function dayDataFor(today) {
-    var d = new Date(today); d.setHours(0,0,0,0)
-    return { selectedDate: d, selectedDateStr: ymd(d) }
-}
-function shiftDay(date, delta) {
-    var nd = new Date(date); nd.setDate(nd.getDate() + delta); nd.setHours(0,0,0,0)
-    return { selectedDate: nd, selectedDateStr: ymd(nd) }
-}
-function dayLabel(date) {
-    if (!date) return ""
-    return dayLabels[date.getDay()] + " " + monthLabels[date.getMonth()] + " " + date.getDate()
 }
 
 function weekLabel(weekDates) {
@@ -108,17 +94,11 @@ function parseFavorites(raw) {
     }
     return {}
 }
-function favsFor(favMap, leagueId) { return (favMap && favMap[leagueId]) ? favMap[leagueId].slice() : [] }
 function isFav(favMapOrArray, abbr, leagueId) {
-    // back-compat: if array passed, treat as legacy
     if (Array.isArray(favMapOrArray)) return favMapOrArray.indexOf(abbr) >= 0
     if (!leagueId) return false
     var arr = favMapOrArray[leagueId] || []
     return arr.indexOf(abbr) >= 0
-}
-function isFavLegacy(favorites, abbr) { // legacy helper
-    if (Array.isArray(favorites)) return favorites.indexOf(abbr) >= 0
-    return false
 }
 function toggleFavMap(favMap, leagueId, abbr) {
     var out = {}
@@ -128,13 +108,6 @@ function toggleFavMap(favMap, leagueId, abbr) {
     if (idx >= 0) arr.splice(idx, 1); else arr.push(abbr)
     if (arr.length) out[leagueId] = arr; else delete out[leagueId]
     return out
-}
-// legacy toggle for flat array (kept for compat)
-function toggleFav(favorites, abbr) {
-    var arr = favorites.slice()
-    var idx = arr.indexOf(abbr)
-    if (idx >= 0) arr.splice(idx, 1); else arr.push(abbr)
-    return arr
 }
 function isLeagueFav(favMap, leagueId) { var arr = favMap["favoriteLeagues"] || []; return arr.indexOf(leagueId) >= 0 }
 function toggleLeagueFav(favMap, leagueId) {
@@ -202,10 +175,6 @@ function leads(game, side) {
 
 function statusColor(state, urgent, defCol) { return state === "in" ? urgent : defCol }
 
-function scoreboardUrl(dateStr, leagueId) {
-    if (leagueId) { var L = leagueFor(leagueId); return apiUrlFor(L.sport, L.league) + "?dates=" + dateStr }
-    return apiUrl + "?dates=" + dateStr
-}
 function summaryUrl(eventId, leagueId) {
     if (leagueId) { var L = leagueFor(leagueId); return summaryBaseFor(L.sport, L.league) + "?event=" + eventId }
     return summaryBase + "?event=" + eventId
@@ -351,49 +320,7 @@ function parseDetail(raw, selectedGame, leagueId) {
     if (gv && gv.address) addr = gv.address.city + (gv.address.state ? ", " + gv.address.state : "") + (gv.address.country && !gv.address.state ? ", " + gv.address.country : "")
     var st = comp.status || {}
     var stType = st.type || {}
-    var detailSituation = {
-        state: stType.state || "",
-        clock: st.displayClock || st.clock || "",
-        period: st.period != null ? st.period : (stType.detail || ""),
-        detail: stType.detail || "",
-        shortDetail: stType.shortDetail || "",
-        isLive: stType.state === "in"
-    }
-    // broadcasts: prefer header broadcasts, fallback to top-level
-    var rawBc = (comp.broadcasts && comp.broadcasts.length ? comp.broadcasts : (d.broadcasts || []))
-    var detailBroadcasts = []
-    for (var bi = 0; bi < rawBc.length; bi++) {
-        var bc = rawBc[bi]
-        var name = (bc.media && bc.media.shortName) || bc.shortName || (bc.media && bc.media.name) || bc.names && bc.names[0] || ""
-        if (name) detailBroadcasts.push(name)
-    }
-    if (!detailBroadcasts.length && rawBc.length) {
-        // scoreboard-style {names:[...]}
-        for (var bi2 = 0; bi2 < rawBc.length; bi2++) if (rawBc[bi2].names) for (var n = 0; n < rawBc[bi2].names.length; n++) if (detailBroadcasts.indexOf(rawBc[bi2].names[n]) < 0) detailBroadcasts.push(rawBc[bi2].names[n])
-    }
-    // odds: pickcenter preferred, fallback to odds
-    var detailOdds = null
-    var pc = d.pickcenter || d.againstTheSpread || []
-    var od = d.odds || comp.odds || []
-    var src = pc.length ? pc[0] : (od.length ? od[0] : null)
-    if (src) {
-        detailOdds = {
-            details: src.details || src.detail || "",
-            spread: src.spread != null ? String(src.spread) : (src.pointSpread ? "" : ""),
-            overUnder: src.overUnder != null ? String(src.overUnder) : (src.total ? "" : ""),
-            provider: src.provider ? src.provider.name || src.provider.displayName || "" : ""
-        }
-        // soccer odds have nested moneyline/spread/total
-        if (!detailOdds.details && src.moneyline) {
-            var mlH = src.moneyline.home && src.moneyline.home.close && src.moneyline.home.close.odds
-            var mlA = src.moneyline.away && src.moneyline.away.close && src.moneyline.away.close.odds
-            if (mlH || mlA) detailOdds.details = (mlA ? "A " + mlA : "") + (mlH ? " H " + mlH : "")
-        }
-        if (!detailOdds.overUnder && src.total && src.total.over) detailOdds.overUnder = (src.total.over.close && src.total.over.close.line) || src.total.displayName || ""
-        if (!detailOdds.spread && src.pointSpread && src.pointSpread.home) detailOdds.spread = (src.pointSpread.home.close && src.pointSpread.home.close.line) || ""
-    }
     var detailLeaders = d.leaders || []
-    var detailWinProb = d.winprobability || d.winProbability || []
     var detailPlays = d.plays || d.keyEvents || []
     var detailDrives = []
     // NFL fallback: drives + scoringPlays when plays empty (preseason)
@@ -419,8 +346,7 @@ function parseDetail(raw, selectedGame, leagueId) {
     var detailStandings = d.standings || null
     var detailNews = (d.news && d.news.articles) ? d.news.articles.slice(0, 3) : []
     var detailVideos = d.videos ? d.videos.slice(0, 2) : []
-    var detailLinks = (header.links || []).concat((d.header && d.header.links) || [])
-    var detailTeams = { away: away, home: home, venue: venue, addr: addr, status: stType.detail || "", situation: detailSituation, broadcasts: detailBroadcasts, odds: detailOdds }
+    var detailTeams = { away: away, home: home, venue: venue, addr: addr, status: stType.detail || "" }
     var detailPlayers = box.players || null
     var rosters = d.rosters || null
     var groups = [], groupMap = {}, order = []
@@ -484,7 +410,6 @@ function parseDetail(raw, selectedGame, leagueId) {
         for (var gi = 0; gi < order.length; gi++) groups.push(groupMap[order[gi]])
     }
     return { detailTeams: detailTeams, detailStats: paired, detailPlayers: detailPlayers, detailPlayerGroups: groups,
-        detailBroadcasts: detailBroadcasts, detailOdds: detailOdds, detailLeaders: detailLeaders, detailWinProb: detailWinProb,
-        detailPlays: detailPlays, detailDrives: detailDrives, detailSituation: detailSituation, detailStandings: detailStandings, detailInjuries: detailInjuries,
-        detailNews: detailNews, detailVideos: detailVideos, detailLinks: detailLinks }
+        detailLeaders: detailLeaders, detailPlays: detailPlays, detailDrives: detailDrives, detailStandings: detailStandings, detailInjuries: detailInjuries,
+        detailNews: detailNews, detailVideos: detailVideos }
 }

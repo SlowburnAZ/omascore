@@ -33,29 +33,21 @@ Panel {
   property var weekDates: []
   property var hasGames: [false,false,false,false,false,false,false]
   property int selectedDay: 0
-  property var selectedDate: null
-  property string selectedDateStr: ""
   property var dayLabels: Model.dayLabels
   property var monthLabels: Model.monthLabels
-  readonly property bool isWeekMode: true
 
   property var selectedGame: null
   property var detailStats: null
   property var detailTeams: null
   property var detailPlayers: null
   property var detailPlayerGroups: null
-  property var detailBroadcasts: []
-  property var detailOdds: null
   property var detailLeaders: []
-  property var detailWinProb: []
   property var detailPlays: []
   property var detailDrives: []
-  property var detailSituation: null
   property var detailStandings: null
   property var detailInjuries: []
   property var detailNews: []
   property var detailVideos: []
-  property bool showOdds: true
   property bool detailLoading: false
   property bool detailStale: false
   property string detailError: ""
@@ -109,26 +101,13 @@ Panel {
   function sundayOf(d) { return Model.sundayOf(d) }
   function ymd(d) { return Model.ymd(d) }
   function weekLabel() { return Model.weekLabel(root.weekDates) }
-  function dayLabel() { return Model.dayLabel(root.selectedDate) }
   function leagueLabel(id) { return Model.leagueFor(id).label }
   function setLeague(id) {
     if (id == root.currentLeagueId) return
     root.currentLeagueId = id
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.games = []; root.lastError = ""
-    if (root.isWeekMode) root.initWeek(); else root.initDay()
-  }
-  function initDay() {
-    var today = new Date(); today.setHours(0,0,0,0)
-    var d = Model.dayDataFor(today)
-    root.selectedDate = d.selectedDate; root.selectedDateStr = d.selectedDateStr
-    root.refreshSelected()
-  }
-  function shiftDay(delta) {
-    if (!root.selectedDate) return
-    var d = Model.shiftDay(root.selectedDate, delta)
-    root.selectedDate = d.selectedDate; root.selectedDateStr = d.selectedDateStr
-    root.refreshSelected()
+    root.initWeek()
   }
 
   function initWeek() {
@@ -148,7 +127,6 @@ Panel {
   }
   function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.refreshSelected() }
   function checkWeekGames() {
-    if (!root.isWeekMode) return
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
     var cmd = Model.weekCurl(root.weekDateStrs, root.currentLeagueId)
     weekProc.running = false; weekProc.command = ["bash","-c",cmd]; weekProc.running = true
@@ -161,20 +139,20 @@ Panel {
     if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
   }
   function refreshSelected() {
-    var ds = root.isWeekMode ? (root.weekDateStrs[root.selectedDay] || "") : root.selectedDateStr
+    var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
     fetchProc.running = false; fetchProc.command = ["bash","-c", Model.fetchCurl(ds, root.currentLeagueId)]; fetchProc.running = true
   }
   function showDetail(game) {
     if (!game || !game.id) return
     root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
-    root.detailBroadcasts = []; root.detailOdds = null; root.detailLeaders = []; root.detailWinProb = []; root.detailPlays = []; root.detailDrives = []; root.detailSituation = null; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
+    root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0
     detailProc.running = false; detailProc.command = ["bash","-c","curl -fsS --max-time 10 '" + Model.summaryUrl(game.id, root.currentLeagueId) + "' 2>/dev/null"]; detailProc.running = true
   }
   function closeDetail() {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
-    root.detailBroadcasts = []; root.detailOdds = null; root.detailLeaders = []; root.detailWinProb = []; root.detailPlays = []; root.detailDrives = []; root.detailSituation = null; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
+    root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = false; root.detailStale = false
   }
   function loadDetail() { root.detailStale = false; root.detailError = ""; if (root.selectedGame) root.showDetail(root.selectedGame) }
@@ -184,8 +162,7 @@ Panel {
     try {
       var r = Model.parseDetail(raw, root.selectedGame, root.currentLeagueId)
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
-      root.detailBroadcasts = r.detailBroadcasts || []; root.detailOdds = r.detailOdds || null; root.detailLeaders = r.detailLeaders || []; root.detailWinProb = r.detailWinProb || []
-      root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailSituation = r.detailSituation || null; root.detailStandings = r.detailStandings || null; root.detailInjuries = r.detailInjuries || []
+      root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = r.detailStandings || null; root.detailInjuries = r.detailInjuries || []
       root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
       console.log("omascore detail", root.currentLeagueId, root.selectedGame ? root.selectedGame.id : "", "plays", root.detailPlays.length, "drives", root.detailDrives.length, "groups", root.detailPlayerGroups ? root.detailPlayerGroups.length : -1, "leaders", root.detailLeaders.length, "standings", !!root.detailStandings, "venue", r.detailTeams.venue)
       root.detailLoading = false
@@ -320,12 +297,11 @@ Panel {
     onTriggered: root.refresh()
   }
 
-  function initForCurrent() { if (root.isWeekMode) root.initWeek(); else root.initDay() }
+  function initForCurrent() { root.initWeek() }
   Component.onCompleted: Qt.callLater(root.initForCurrent)
 
   onOpenedChanged: if (root.opened) {
-    if (root.isWeekMode) { if (!root.weekStart) root.initWeek(); else root.refreshSelected() }
-    else { if (!root.selectedDate) root.initDay(); else root.refreshSelected() }
+    if (!root.weekStart) root.initWeek(); else root.refreshSelected()
   }
 
   KeyboardPanel {
@@ -441,7 +417,7 @@ Panel {
             width: parent.width - Style.space(20)
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(4)
-            visible: root.isWeekMode && root.weekDates.length === 7 && !root.selectedGame
+            visible: root.weekDates.length === 7 && !root.selectedGame
 
             Button {
               Layout.preferredWidth: Style.space(28)
@@ -525,41 +501,7 @@ Panel {
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
-            visible: root.isWeekMode && root.weekDates.length === 7 && !root.selectedGame
-          }
-
-          RowLayout {
-            width: parent.width - Style.space(20)
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(8)
-            visible: !root.isWeekMode && !root.selectedGame
-            Button {
-              Layout.preferredWidth: Style.space(28)
-              Layout.preferredHeight: Style.space(28)
-              iconText: "\u2039"
-              foreground: root.barForeground
-              accent: Color.accent
-              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.shiftDay(-1)
-            }
-            Text {
-              Layout.fillWidth: true
-              horizontalAlignment: Text.AlignHCenter
-              text: root.dayLabel()
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.bodySmall
-              font.bold: true
-            }
-            Button {
-              Layout.preferredWidth: Style.space(28)
-              Layout.preferredHeight: Style.space(28)
-              iconText: "\u203A"
-              foreground: root.barForeground
-              accent: Color.accent
-              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.shiftDay(1)
-            }
+            visible: root.weekDates.length === 7 && !root.selectedGame
           }
 
           Text {
