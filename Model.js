@@ -173,6 +173,28 @@ function leads(game, side) {
     return mine > other
 }
 
+// Classify a tracked game's transition from its previous composite key ("a|b|state"):
+// "final" on a real in->post flip (postponed/suspended/canceled also report "post" —
+// those are NOT finals), "score" when the score moved, null otherwise.
+function scoreEvent(prev, g) {
+    if (!prev || !g || !g.away || !g.home) return null
+    var parts = prev.split("|")
+    var scoreChanged = parts[0] !== String(g.away.score || "") || parts[1] !== String(g.home.score || "")
+    var isFinal = parts[2] === "in" && g.state === "post" && !/postponed|suspended|delayed|cancel/i.test(g.detail || "")
+    if (isFinal) return "final"
+    return scoreChanged ? "score" : null
+}
+
+// Minutes until kickoff when a pre-game reminder should fire (inside the 10-minute
+// window), else -1. state comes from ESPN ("pre"|"in"|"post").
+function kickoffMinutes(dateStr, state, now) {
+    if (state !== "pre" || !dateStr) return -1
+    var t = new Date(dateStr)
+    if (isNaN(t.getTime())) return -1
+    var mins = Math.round((t.getTime() - now.getTime()) / 60000)
+    return (mins > 0 && mins <= 10) ? mins : -1
+}
+
 function statusColor(state, urgent, defCol) { return state === "in" ? urgent : defCol }
 
 function summaryUrl(eventId, leagueId) {
@@ -181,8 +203,8 @@ function summaryUrl(eventId, leagueId) {
 }
 function fetchCurl(dateStr, leagueId) {
     var url = leagueId ? apiUrlFor(leagueFor(leagueId).sport, leagueFor(leagueId).league) : apiUrl
-    var tmp = leagueId ? "/tmp/omascore-" + leagueId + "-scores.json" : "/tmp/nfl-scores.json"
-    return "curl -fsS --max-time 10 '" + url + "?dates='\"" + dateStr + "\" 2>/dev/null | tee " + tmp
+    var cache = "~/.local/state/omarchy/omascore-" + (leagueId || "default") + "-cache.json"
+    return "mkdir -p ~/.local/state/omarchy; curl -fsS --max-time 10 '" + url + "?dates='\"" + dateStr + "\" 2>/dev/null | tee " + cache
 }
 function weekCurl(dateStrs, leagueId) {
     var url = leagueId ? apiUrlFor(leagueFor(leagueId).sport, leagueFor(leagueId).league) : apiUrl
@@ -207,7 +229,7 @@ function parseGames(raw) {
         var ev = events[i]
         var comp = ev.competitions && ev.competitions[0]
         if (!comp) continue
-        var g = { id: ev.id, state: ev.status.type.state, detail: ev.status.type.shortDetail, away: null, home: null }
+        var g = { id: ev.id, state: ev.status.type.state, detail: ev.status.type.shortDetail, date: ev.date || "", away: null, home: null }
         var cs = comp.competitors || []
         for (var j = 0; j < cs.length; j++) {
             var c = cs[j]

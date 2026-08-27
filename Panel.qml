@@ -19,12 +19,27 @@ Panel {
   property var favorites: ({})
   property int liveCount: 0
   property bool favLive: false
-  readonly property var favLiveGame: {
+  readonly property int pollInterval: root.favLive ? 25000 : (root.liveCount > 0 ? 60000 : 120000)
+  property bool leagueRestored: false
+  property var kickoffNotified: ({})
+  property var scoreFlash: ({})
+  property int flashTick: 0
+  property int cursorIndex: -1
+  readonly property var favLiveGames: {
+    var out = []
     for (var i = 0; i < root.games.length; i++) {
       var g = root.games[i]
-      if (g.state === "in" && (root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) return g
+      if (g.state === "in" && (root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) out.push(g)
     }
-    return null
+    return out
+  }
+  property int favLiveRotate: 0
+  readonly property var favLiveGame: root.favLiveGames.length ? root.favLiveGames[root.favLiveRotate % root.favLiveGames.length] : null
+  Timer {
+    running: root.favLiveGames.length > 1
+    interval: 4000
+    repeat: true
+    onTriggered: root.favLiveRotate = (root.favLiveRotate + 1) % root.favLiveGames.length
   }
   readonly property string favLiveScore: {
     var g = root.favLiveGame
@@ -155,7 +170,11 @@ Panel {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.games = []; root.lastError = ""
     root.prevScores = ({})
+    root.kickoffNotified = ({})
+    root.scoreFlash = ({})
+    root.cursorIndex = -1
     root.initWeek()
+    root.setSetting("lastLeague", id)
   }
 
   function initWeek() {
@@ -173,7 +192,7 @@ Panel {
     root.hasGames = [false,false,false,false,false,false,false]
     root.checkWeekGames(); root.refreshSelected()
   }
-  function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.refreshSelected() }
+  function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.cursorIndex = -1; root.refreshSelected() }
   function checkWeekGames() {
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
     var cmd = Model.weekCurl(root.weekDateStrs, root.currentLeagueId)
@@ -236,20 +255,57 @@ Panel {
     for (var i = 0; i < games.length; i++) {
       var g = games[i]
       if (!g.away || !g.home) continue
-      var cur = (g.away.score || "") + "|" + (g.home.score || "")
+      var cur = (g.away.score || "") + "|" + (g.home.score || "") + "|" + g.state
       next[g.id] = cur
+      var old = root.prevScores[g.id]
+      if (old !== undefined && old !== cur) {
+        var oldParts = old.split("|")
+        if (oldParts[0] !== String(g.away.score || "") || oldParts[1] !== String(g.home.score || "")) {
+          root.scoreFlash[g.id] = new Date().getTime()
+          root.flashTick++
+        }
+      }
       if (!root.notifyEnabled) continue
-      if (root.prevScores[g.id] === undefined || root.prevScores[g.id] === cur) continue
       if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
+      var koMin = Model.kickoffMinutes(g.date, g.state, new Date())
+      if (koMin > 0 && !root.kickoffNotified[g.id]) {
+        root.kickoffNotified[g.id] = true
+        if (!notifProc.running) {
+          notifProc.command = ["notify-send", "-a", "OmaScore",
+            g.away.abbr + " @ " + g.home.abbr + " kicks off in " + koMin + " min",
+            root.leagueLabel(root.currentLeagueId) + " \u00b7 " + root.gameStatus(g)]
+          notifProc.running = true
+        }
+      }
+      if (old === undefined || old === cur) continue
+      var ev = Model.scoreEvent(old, g)
+      if (!ev) continue
       if (notifProc.running) continue
-      notifProc.command = ["notify-send", "-a", "OmaScore",
-        g.away.abbr + " " + g.away.score + " \u2014 " + g.home.abbr + " " + g.home.score,
-        root.leagueLabel(root.currentLeagueId) + " \u00b7 " + g.detail]
+      notifProc.command = ev === "final"
+        ? ["notify-send", "-a", "OmaScore",
+            "Final \u2014 " + g.away.abbr + " " + (g.away.score || "0") + " \u00b7 " + g.home.abbr + " " + (g.home.score || "0"),
+            root.leagueLabel(root.currentLeagueId) + " \u00b7 " + (g.detail || "")]
+        : ["notify-send", "-a", "OmaScore",
+            g.away.abbr + " " + (g.away.score || "0") + " \u2014 " + g.home.abbr + " " + (g.home.score || "0"),
+            root.leagueLabel(root.currentLeagueId) + " \u00b7 " + g.detail]
       notifProc.running = true
     }
     root.prevScores = next
   }
   function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
+  function moveCursor(dy) {
+    if (!root.listVisible) return
+    root.cursorIndex = Math.max(-1, Math.min(root.shownGames.length - 1, root.cursorIndex + dy))
+  }
+  function activateCursor() {
+    if (root.listVisible && root.cursorIndex >= 0 && root.cursorIndex < root.shownGames.length)
+      root.showDetail(root.shownGames[root.cursorIndex])
+  }
+  function gameStatus(g) {
+    if (!g) return ""
+    var base = (g.state === "pre" && g.date) ? Qt.formatDateTime(new Date(g.date), "M/d - h:mm AP") : (g.detail || "")
+    return base + (root.showOdds && g.state === "pre" && g.odds ? "  \u00b7  " + g.odds : "")
+  }
   function standingsStat(entry, names) {
     var s = (entry && entry.stats) ? entry.stats : []
     for (var i = 0; i < s.length; i++) if (names.indexOf(s[i].name) >= 0 || names.indexOf(s[i].abbreviation) >= 0) return s[i].displayValue != null ? s[i].displayValue : (s[i].value != null ? String(s[i].value) : "")
@@ -332,7 +388,7 @@ Panel {
   }
   FileView {
     id: cacheStore
-    path: "/tmp/omascore-" + root.currentLeagueId + "-scores.json"
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-" + root.currentLeagueId + "-cache.json"
     watchChanges: false
     printErrors: false
     onLoaded: if (root.games.length === 0) root.parseGames(text(), true)
@@ -368,16 +424,28 @@ Panel {
   }
 
   Timer {
-    interval: 60000
+    id: pollTimer
+    interval: root.pollInterval
     repeat: true
     running: true
     onTriggered: root.refresh()
   }
+  onPollIntervalChanged: pollTimer.restart()
 
-  function initForCurrent() { root.initWeek() }
+  function restoreLastLeague() {
+    if (root.leagueRestored) return
+    var w = root.hostWidget
+    if (!w || typeof w.setting !== "function") return
+    var saved = w.setting("lastLeague", "")
+    if (!saved) return
+    root.leagueRestored = true
+    if (saved !== root.currentLeagueId && Model.leagueFor(saved).id === saved) root.setLeague(saved)
+  }
+  function initForCurrent() { root.restoreLastLeague(); root.initWeek() }
   Component.onCompleted: Qt.callLater(root.initForCurrent)
 
   onOpenedChanged: if (root.opened) {
+    root.restoreLastLeague()
     if (!root.weekStart) root.initWeek(); else root.refreshSelected()
   }
 
@@ -396,8 +464,10 @@ Panel {
       PanelKeyCatcher {
         id: keyCatcher
         anchors.fill: parent
-        onCloseRequested: { if (root.showSettings) root.showSettings = false; else if (root.selectedGame) root.closeDetail(); else root.close() }
+        onCloseRequested: { if (root.showSettings) root.showSettings = false; else if (root.selectedGame) root.closeDetail(); else if (root.cursorIndex >= 0) root.cursorIndex = -1; else root.close() }
         onTabRequested: function(direction) { if (root.selectedGame) root.closeDetail(); else root.switchPanel(direction) }
+        onMoveRequested: function(dx, dy) { root.moveCursor(dy) }
+        onActivateRequested: root.activateCursor()
 
       ScrollView {
         id: scrollArea
@@ -634,9 +704,31 @@ Panel {
 
             Column {
               required property var modelData
+              required property int index
               visible: root.listVisible
               width: parent.width
               spacing: Style.space(4)
+
+              Rectangle {
+                id: flashRect
+                anchors.fill: parent
+                anchors.margins: -Style.space(4)
+                z: -1
+                readonly property string gid: modelData ? modelData.id : ""
+                readonly property bool flashing: root.flashTick >= 0 && (root.scoreFlash[gid] || 0) > 0 && new Date().getTime() - root.scoreFlash[gid] < 700
+                onFlashingChanged: if (flashing) flashExpire.restart()
+                visible: index === root.cursorIndex || flashing || color.a > 0
+                color: index === root.cursorIndex
+                  ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                  : (flashing ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.28) : "transparent")
+                radius: Style.space(6)
+                Behavior on color { ColorAnimation { duration: 350 } }
+                Timer {
+                  id: flashExpire
+                  interval: 700
+                  onTriggered: root.flashTick++
+                }
+              }
 
               TapHandler {
                 onTapped: root.showDetail(modelData)
@@ -749,7 +841,7 @@ Panel {
               Text {
                 width: parent.width
                 horizontalAlignment: Text.AlignRight
-                text: modelData ? modelData.detail + (root.showOdds && modelData.state === "pre" && modelData.odds ? "  \u00b7  " + modelData.odds : "") : ""
+                text: root.gameStatus(modelData)
                 color: modelData ? root.statusColor(modelData.state) : root.barForeground
                 opacity: modelData && modelData.state === "in" ? 1.0 : 0.6
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
