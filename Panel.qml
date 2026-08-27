@@ -341,7 +341,7 @@ Panel {
             implicitHeight: heroIcon.implicitHeight
             Text {
               id: heroIcon
-              text: "\uD83C\uDFC6"
+              text: "\uf091"
               color: root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.display

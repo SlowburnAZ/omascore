@@ -54,7 +54,7 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uD83C\uDFC6"
+    text: "\uf091"
     dimmed: !root.panel || root.panel.games.length === 0
     active: root.panel ? root.panel.favLive : false
     foreground: root.panel && root.panel.favLive ? Color.accent : Color.foreground
