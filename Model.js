@@ -146,14 +146,18 @@ function toggleLeagueFav(favMap, leagueId) {
     if (arr.length) out["favoriteLeagues"] = arr; else delete out["favoriteLeagues"]
     return out
 }
+var leagueTier = { nfl:1, nba:1, mlb:1, nhl:1, wnba:1, mls:1, cfb:2, ncaam:2, ncaaw:2, epl:2, ucl:2, laliga:3, bundes:3, seriea:3, ligue1:3 }
 function sortedLeagues(leagues, favMap) {
     var favs = favMap["favoriteLeagues"] || []
     var arr = leagues.slice()
     arr.sort(function(a,b){
-        var aFav = favs.indexOf(a.id) >= 0 ? 0 : 1
-        var bFav = favs.indexOf(b.id) >= 0 ? 0 : 1
-        if (aFav !== bFav) return aFav - bFav
-        return 0
+        var aIdx = favs.indexOf(a.id), bIdx = favs.indexOf(b.id)
+        var aFav = aIdx >= 0, bFav = bIdx >= 0
+        if (aFav !== bFav) return aFav ? -1 : 1
+        if (aFav && bFav) return aIdx - bIdx // earliest favorited first
+        var at = leagueTier[a.id] || 99, bt = leagueTier[b.id] || 99
+        if (at !== bt) return at - bt
+        return 0 // stable within tier (preserves leagues array order)
     })
     return arr
 }
@@ -341,10 +345,82 @@ function parseDetail(raw, selectedGame, leagueId) {
             if (compAway.records && compAway.records[0]) paired.push({ label: "Record", away: compAway.records[0].summary, home: compHome.records && compHome.records[0] ? compHome.records[0].summary : "-" })
         }
     }
-    var venue = comp.venue ? (comp.venue.fullName || "") : ""
+    var gv = (comp.venue && comp.venue.fullName) ? comp.venue : (d.gameInfo && d.gameInfo.venue) ? d.gameInfo.venue : null
+    var venue = gv ? (gv.fullName || "") : ""
     var addr = ""
-    if (comp.venue && comp.venue.address) addr = comp.venue.address.city + (comp.venue.address.state ? ", " + comp.venue.address.state : "")
-    var detailTeams = { away: away, home: home, venue: venue, addr: addr, status: comp.status ? comp.status.type.detail : "" }
+    if (gv && gv.address) addr = gv.address.city + (gv.address.state ? ", " + gv.address.state : "") + (gv.address.country && !gv.address.state ? ", " + gv.address.country : "")
+    var st = comp.status || {}
+    var stType = st.type || {}
+    var detailSituation = {
+        state: stType.state || "",
+        clock: st.displayClock || st.clock || "",
+        period: st.period != null ? st.period : (stType.detail || ""),
+        detail: stType.detail || "",
+        shortDetail: stType.shortDetail || "",
+        isLive: stType.state === "in"
+    }
+    // broadcasts: prefer header broadcasts, fallback to top-level
+    var rawBc = (comp.broadcasts && comp.broadcasts.length ? comp.broadcasts : (d.broadcasts || []))
+    var detailBroadcasts = []
+    for (var bi = 0; bi < rawBc.length; bi++) {
+        var bc = rawBc[bi]
+        var name = (bc.media && bc.media.shortName) || bc.shortName || (bc.media && bc.media.name) || bc.names && bc.names[0] || ""
+        if (name) detailBroadcasts.push(name)
+    }
+    if (!detailBroadcasts.length && rawBc.length) {
+        // scoreboard-style {names:[...]}
+        for (var bi2 = 0; bi2 < rawBc.length; bi2++) if (rawBc[bi2].names) for (var n = 0; n < rawBc[bi2].names.length; n++) if (detailBroadcasts.indexOf(rawBc[bi2].names[n]) < 0) detailBroadcasts.push(rawBc[bi2].names[n])
+    }
+    // odds: pickcenter preferred, fallback to odds
+    var detailOdds = null
+    var pc = d.pickcenter || d.againstTheSpread || []
+    var od = d.odds || comp.odds || []
+    var src = pc.length ? pc[0] : (od.length ? od[0] : null)
+    if (src) {
+        detailOdds = {
+            details: src.details || src.detail || "",
+            spread: src.spread != null ? String(src.spread) : (src.pointSpread ? "" : ""),
+            overUnder: src.overUnder != null ? String(src.overUnder) : (src.total ? "" : ""),
+            provider: src.provider ? src.provider.name || src.provider.displayName || "" : ""
+        }
+        // soccer odds have nested moneyline/spread/total
+        if (!detailOdds.details && src.moneyline) {
+            var mlH = src.moneyline.home && src.moneyline.home.close && src.moneyline.home.close.odds
+            var mlA = src.moneyline.away && src.moneyline.away.close && src.moneyline.away.close.odds
+            if (mlH || mlA) detailOdds.details = (mlA ? "A " + mlA : "") + (mlH ? " H " + mlH : "")
+        }
+        if (!detailOdds.overUnder && src.total && src.total.over) detailOdds.overUnder = (src.total.over.close && src.total.over.close.line) || src.total.displayName || ""
+        if (!detailOdds.spread && src.pointSpread && src.pointSpread.home) detailOdds.spread = (src.pointSpread.home.close && src.pointSpread.home.close.line) || ""
+    }
+    var detailLeaders = d.leaders || []
+    var detailWinProb = d.winprobability || d.winProbability || []
+    var detailPlays = d.plays || d.keyEvents || []
+    var detailDrives = []
+    // NFL fallback: drives + scoringPlays when plays empty (preseason)
+    if (!detailPlays.length && d.drives) {
+        var dr = d.drives.previous || d.drives.drives || []
+        if (!dr.length && d.drives.drives) dr = d.drives.drives
+        if (dr.length && dr[0].plays) detailDrives = dr.slice()
+        var flat = []
+        for (var di = 0; di < dr.length; di++) {
+            var dp = dr[di].plays || []
+            for (var pi = 0; pi < dp.length; pi++) flat.push(dp[pi])
+        }
+        if (flat.length) detailPlays = flat
+        else if (d.scoringPlays && d.scoringPlays.length) detailPlays = d.scoringPlays.slice()
+    }
+    if (!detailPlays.length && d.scoringPlays && d.scoringPlays.length) detailPlays = d.scoringPlays.slice()
+    // keep drives for grouped display even when plays exist (regular season also has drives)
+    if (!detailDrives.length && d.drives) {
+        var dr2 = d.drives.previous || d.drives.drives || []
+        if (dr2.length && dr2[0].plays) detailDrives = dr2.slice()
+    }
+    var detailInjuries = d.injuries || []
+    var detailStandings = d.standings || null
+    var detailNews = (d.news && d.news.articles) ? d.news.articles.slice(0, 3) : []
+    var detailVideos = d.videos ? d.videos.slice(0, 2) : []
+    var detailLinks = (header.links || []).concat((d.header && d.header.links) || [])
+    var detailTeams = { away: away, home: home, venue: venue, addr: addr, status: stType.detail || "", situation: detailSituation, broadcasts: detailBroadcasts, odds: detailOdds }
     var detailPlayers = box.players || null
     var rosters = d.rosters || null
     var groups = [], groupMap = {}, order = []
@@ -407,5 +483,8 @@ function parseDetail(raw, selectedGame, leagueId) {
         }
         for (var gi = 0; gi < order.length; gi++) groups.push(groupMap[order[gi]])
     }
-    return { detailTeams: detailTeams, detailStats: paired, detailPlayers: detailPlayers, detailPlayerGroups: groups }
+    return { detailTeams: detailTeams, detailStats: paired, detailPlayers: detailPlayers, detailPlayerGroups: groups,
+        detailBroadcasts: detailBroadcasts, detailOdds: detailOdds, detailLeaders: detailLeaders, detailWinProb: detailWinProb,
+        detailPlays: detailPlays, detailDrives: detailDrives, detailSituation: detailSituation, detailStandings: detailStandings, detailInjuries: detailInjuries,
+        detailNews: detailNews, detailVideos: detailVideos, detailLinks: detailLinks }
 }

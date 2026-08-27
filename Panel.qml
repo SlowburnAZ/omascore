@@ -43,6 +43,18 @@ Panel {
   property var detailTeams: null
   property var detailPlayers: null
   property var detailPlayerGroups: null
+  property var detailBroadcasts: []
+  property var detailOdds: null
+  property var detailLeaders: []
+  property var detailWinProb: []
+  property var detailPlays: []
+  property var detailDrives: []
+  property var detailSituation: null
+  property var detailStandings: null
+  property var detailInjuries: []
+  property var detailNews: []
+  property var detailVideos: []
+  property bool showOdds: true
   property bool detailLoading: false
   property bool detailStale: false
   property string detailError: ""
@@ -135,11 +147,13 @@ Panel {
   function showDetail(game) {
     if (!game || !game.id) return
     root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    root.detailBroadcasts = []; root.detailOdds = null; root.detailLeaders = []; root.detailWinProb = []; root.detailPlays = []; root.detailDrives = []; root.detailSituation = null; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0
     detailProc.running = false; detailProc.command = ["bash","-c","curl -fsS --max-time 10 '" + Model.summaryUrl(game.id, root.currentLeagueId) + "' 2>/dev/null"]; detailProc.running = true
   }
   function closeDetail() {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    root.detailBroadcasts = []; root.detailOdds = null; root.detailLeaders = []; root.detailWinProb = []; root.detailPlays = []; root.detailDrives = []; root.detailSituation = null; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = false; root.detailStale = false
   }
   function loadDetail() { root.detailStale = false; root.detailError = ""; if (root.selectedGame) root.showDetail(root.selectedGame) }
@@ -149,6 +163,10 @@ Panel {
     try {
       var r = Model.parseDetail(raw, root.selectedGame, root.currentLeagueId)
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
+      root.detailBroadcasts = r.detailBroadcasts || []; root.detailOdds = r.detailOdds || null; root.detailLeaders = r.detailLeaders || []; root.detailWinProb = r.detailWinProb || []
+      root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailSituation = r.detailSituation || null; root.detailStandings = r.detailStandings || null; root.detailInjuries = r.detailInjuries || []
+      root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
+      console.log("omascore detail", root.currentLeagueId, root.selectedGame ? root.selectedGame.id : "", "plays", root.detailPlays.length, "drives", root.detailDrives.length, "groups", root.detailPlayerGroups ? root.detailPlayerGroups.length : -1, "leaders", root.detailLeaders.length, "standings", !!root.detailStandings, "venue", r.detailTeams.venue)
       root.detailLoading = false
     } catch (e) {
       console.log("parseDetail failed", String(e))
@@ -168,6 +186,11 @@ Panel {
     } catch (e) { root.lastError = "Parse error" }
   }
   function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
+  function standingsStat(entry, names) {
+    var s = (entry && entry.stats) ? entry.stats : []
+    for (var i = 0; i < s.length; i++) if (names.indexOf(s[i].name) >= 0 || names.indexOf(s[i].abbreviation) >= 0) return s[i].displayValue != null ? s[i].displayValue : (s[i].value != null ? String(s[i].value) : "")
+    return ""
+  }
 
   FileView {
     id: store
@@ -343,8 +366,8 @@ Panel {
                     }
                     Text {
                       text: root.isLeagueFav(modelData.id) ? "\u2605" : "\u2606"
-                      color: root.isLeagueFav(modelData.id) ? Color.accent : root.barForeground
-                      opacity: root.isLeagueFav(modelData.id) ? 1 : 0.5
+                      color: root.currentLeagueId == modelData.id ? Color.background : (root.isLeagueFav(modelData.id) ? Color.accent : root.barForeground)
+                      opacity: root.isLeagueFav(modelData.id) ? 1 : 0.6
                       font.pixelSize: Style.font.caption
                       MouseArea {
                         anchors.fill: parent
@@ -673,21 +696,21 @@ Panel {
 
             RowLayout {
               width: parent.width
-              spacing: 0
+              spacing: Style.space(8)
               visible: root.detailTeams !== null
               Column {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
-                spacing: Style.space(6)
+                spacing: Style.space(2)
                 Rectangle {
-                  width: Style.space(48); height: Style.space(48); radius: Style.space(8); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
+                  width: Style.space(32); height: Style.space(32); radius: Style.space(6); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
                   Image {
                     anchors.fill: parent
                     source: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.logo : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
-                    sourceSize.width: 96
+                    sourceSize.width: 64
                   }
                 }
                 Text {
@@ -695,13 +718,34 @@ Panel {
                   text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.abbr : ""
                   color: root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.subtitle
+                  font.pixelSize: Style.font.bodySmall
                   font.bold: true
                 }
+                Row {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  spacing: Style.space(6)
+                  Text {
+                    text: root.selectedGame && root.selectedGame.away ? root.selectedGame.away.score : ""
+                    color: root.leads(root.selectedGame, "away") ? Color.accent : root.barForeground
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.subtitle
+                    font.bold: true
+                  }
+                  Text {
+                    visible: root.selectedGame && root.selectedGame.away && root.selectedGame.away.record
+                    text: root.selectedGame && root.selectedGame.away ? "(" + root.selectedGame.away.record + ")" : ""
+                    color: root.barForeground
+                    opacity: 0.45
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
                 Text {
+                  visible: root.detailTeams && root.detailTeams.away && root.detailTeams.away.name
                   text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.name : ""
                   color: root.barForeground
-                  opacity: 0.6
+                  opacity: 0.45
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
@@ -710,42 +754,27 @@ Panel {
                   HoverHandler { id: hoverDetailAway }
                   PanelToolTip { visible: hoverDetailAway.hovered && parent.truncated; text: parent.text }
                 }
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.selectedGame && root.selectedGame.away ? root.selectedGame.away.score : ""
-                  color: root.leads(root.selectedGame, "away") ? Color.accent : root.barForeground
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.title
-                  font.bold: true
-                }
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.selectedGame && root.selectedGame.away && root.selectedGame.away.record ? root.selectedGame.away.record : ""
-                  color: root.barForeground
-                  opacity: 0.5
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.caption
-                }
               }
               Rectangle {
                 width: 1
                 Layout.fillHeight: true
+                Layout.preferredHeight: Style.space(56)
                 Layout.alignment: Qt.AlignVCenter
-                color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.15)
+                color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.12)
               }
               Column {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
-                spacing: Style.space(6)
+                spacing: Style.space(2)
                 Rectangle {
-                  width: Style.space(48); height: Style.space(48); radius: Style.space(8); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
+                  width: Style.space(32); height: Style.space(32); radius: Style.space(6); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
                   Image {
                     anchors.fill: parent
                     source: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.logo : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
-                    sourceSize.width: 96
+                    sourceSize.width: 64
                   }
                 }
                 Text {
@@ -753,13 +782,34 @@ Panel {
                   text: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.abbr : ""
                   color: root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.subtitle
+                  font.pixelSize: Style.font.bodySmall
                   font.bold: true
                 }
+                Row {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  spacing: Style.space(6)
+                  Text {
+                    text: root.selectedGame && root.selectedGame.home ? root.selectedGame.home.score : ""
+                    color: root.leads(root.selectedGame, "home") ? Color.accent : root.barForeground
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.subtitle
+                    font.bold: true
+                  }
+                  Text {
+                    visible: root.selectedGame && root.selectedGame.home && root.selectedGame.home.record
+                    text: root.selectedGame && root.selectedGame.home ? "(" + root.selectedGame.home.record + ")" : ""
+                    color: root.barForeground
+                    opacity: 0.45
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
                 Text {
+                  visible: root.detailTeams && root.detailTeams.home && root.detailTeams.home.name
                   text: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.name : ""
                   color: root.barForeground
-                  opacity: 0.6
+                  opacity: 0.45
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
@@ -768,22 +818,6 @@ Panel {
                   HoverHandler { id: hoverDetailHome }
                   PanelToolTip { visible: hoverDetailHome.hovered && parent.truncated; text: parent.text }
                 }
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.selectedGame && root.selectedGame.home ? root.selectedGame.home.score : ""
-                  color: root.leads(root.selectedGame, "home") ? Color.accent : root.barForeground
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.title
-                  font.bold: true
-                }
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.selectedGame && root.selectedGame.home && root.selectedGame.home.record ? root.selectedGame.home.record : ""
-                  color: root.barForeground
-                  opacity: 0.5
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.caption
-                }
               }
             }
 
@@ -791,23 +825,22 @@ Panel {
               visible: root.detailTeams && root.detailTeams.venue
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
-              text: root.detailTeams ? (root.detailTeams.venue + (root.detailTeams.addr ? " \u2013 " + root.detailTeams.addr : "") + (root.detailTeams.status ? " \u00b7 " + root.detailTeams.status : "")) : ""
+              text: root.detailTeams ? (root.detailTeams.venue + (root.detailTeams.addr ? " – " + root.detailTeams.addr : "") + (root.detailTeams.status ? " · " + root.detailTeams.status : "")) : ""
               color: root.barForeground
               opacity: 0.5
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
-
             PanelSeparator { foreground: root.barForeground; visible: (root.detailStats && root.detailStats.length > 0) || (root.detailPlayers && root.detailPlayers.length > 0) }
 
             RowLayout {
               width: parent.width
-              spacing: Style.space(8)
-              visible: !root.detailLoading && root.detailError === "" && ( (root.detailStats && root.detailStats.length > 0) || (root.detailPlayers && root.detailPlayers.length > 0) )
+              spacing: Style.space(6)
+              visible: !root.detailLoading && root.detailError === ""
               Rectangle {
                 Layout.fillWidth: true
-                height: Style.space(32)
+                height: Style.space(28)
                 radius: Style.space(6)
                 color: root.detailTab === 0 ? Color.accent : "transparent"
                 border.width: root.detailTab === 0 ? 0 : 1
@@ -824,7 +857,7 @@ Panel {
               }
               Rectangle {
                 Layout.fillWidth: true
-                height: Style.space(32)
+                height: Style.space(28)
                 radius: Style.space(6)
                 color: root.detailTab === 1 ? Color.accent : "transparent"
                 border.width: root.detailTab === 1 ? 0 : 1
@@ -838,6 +871,40 @@ Panel {
                   font.bold: root.detailTab === 1
                 }
                 MouseArea { anchors.fill: parent; onClicked: root.detailTab = 1 }
+              }
+              Rectangle {
+                Layout.fillWidth: true
+                height: Style.space(28)
+                radius: Style.space(6)
+                color: root.detailTab === 2 ? Color.accent : "transparent"
+                border.width: root.detailTab === 2 ? 0 : 1
+                border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                Text {
+                  anchors.centerIn: parent
+                  text: "Plays"
+                  color: root.detailTab === 2 ? Color.background : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: root.detailTab === 2
+                }
+                MouseArea { anchors.fill: parent; onClicked: root.detailTab = 2 }
+              }
+              Rectangle {
+                Layout.fillWidth: true
+                height: Style.space(28)
+                radius: Style.space(6)
+                color: root.detailTab === 3 ? Color.accent : "transparent"
+                border.width: root.detailTab === 3 ? 0 : 1
+                border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                Text {
+                  anchors.centerIn: parent
+                  text: "Insights"
+                  color: root.detailTab === 3 ? Color.background : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: root.detailTab === 3
+                }
+                MouseArea { anchors.fill: parent; onClicked: root.detailTab = 3 }
               }
             }
 
@@ -874,50 +941,69 @@ Panel {
               onClicked: root.loadDetail()
             }
 
-            ScrollView {
-              id: detailStatsScroll
-              width: parent.width
-              height: root.selectedGame ? Math.max(Style.space(220), Math.min(detailStatsContent.implicitHeight, scrollArea.height - Style.space(320))) : Math.min(detailStatsContent.implicitHeight, Style.space(380))
-              clip: true
-              visible: !root.detailLoading && root.detailError === ""
-              ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-              ScrollBar.vertical.policy: detailStatsContent.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
-
-              Column {
+            Column {
                 id: detailStatsContent
-                width: detailStatsScroll.availableWidth
+                width: parent.width
                 spacing: Style.space(12)
+                visible: !root.detailLoading && root.detailError === "" 
 
                 Column {
                   width: parent.width
-                  spacing: 0
-                  visible: root.detailTab === 0 && root.detailStats && root.detailStats.length > 0
-                  RowLayout {
+                  spacing: Style.space(12)
+                  visible: root.detailTab === 0
+                  height: visible ? implicitHeight : 0
+                  clip: true
+                  Column {
                     width: parent.width
-                    spacing: Style.space(8)
-                    Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
-                    Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: ""; }
-                    Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
-                  }
-                  Rectangle { width: parent.width; height: 1; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08) }
-                  Repeater {
-                    model: root.detailStats
-                    delegate: RowLayout {
-                      required property var modelData
+                    visible: root.detailStats && root.detailStats.length > 0
+                    spacing: 0
+                    RowLayout {
                       width: parent.width
                       spacing: Style.space(8)
-                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
-                      Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: modelData.label; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
-                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
+                      Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: ""; }
+                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
                     }
+                    Rectangle { width: parent.width; height: 1; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08) }
+                    Repeater {
+                      model: root.detailStats
+                      delegate: Rectangle {
+                        required property var modelData
+                        required property int index
+                        width: parent.width
+                        height: row.implicitHeight + Style.space(4)
+                        color: index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent"
+                        radius: 2
+                        RowLayout {
+                          id: row
+                          anchors.fill: parent
+                          anchors.leftMargin: Style.space(4)
+                          anchors.rightMargin: Style.space(4)
+                          spacing: Style.space(8)
+                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: modelData.label; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
+                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                        }
+                      }
+                    }
+                  }
+                  Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    visible: !root.detailStats || root.detailStats.length === 0
+                    text: "No stats available"
+                    color: root.barForeground
+                    opacity: 0.5
+                    font.pixelSize: Style.font.bodySmall
                   }
                 }
 
                             Column {
               width: parent.width
               spacing: Style.space(12)
-              visible: root.detailTab === 1 && !root.detailLoading && root.detailError === ""
-              Repeater {
+              visible: root.detailTab === 1
+              // height guard breaks Layout sizing inside ScrollView — visible alone suffices
+Repeater {
                 model: root.detailPlayerGroups
                 delegate: Column {
                   required property var modelData
@@ -984,9 +1070,8 @@ Panel {
                           }
                         }
                         Flickable {
-                          Layout.fillWidth: true
-                          Layout.fillHeight: true
-                          implicitHeight: flickAwayContent.implicitHeight
+                          width: parent.width - Style.space(116)
+                          height: flickAwayContent.implicitHeight
                           clip: true
                           flickableDirection: Flickable.HorizontalFlick
                           contentWidth: flickAwayContent.implicitWidth
@@ -1088,9 +1173,8 @@ Panel {
                           }
                         }
                         Flickable {
-                          Layout.fillWidth: true
-                          Layout.fillHeight: true
-                          implicitHeight: flickHomeContent.implicitHeight
+                          width: parent.width - Style.space(116)
+                          height: flickHomeContent.implicitHeight
                           clip: true
                           flickableDirection: Flickable.HorizontalFlick
                           contentWidth: flickHomeContent.implicitWidth
@@ -1146,40 +1230,416 @@ Panel {
               Text {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
-                visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
-                text: "No player stats available"
-                color: root.barForeground
-                opacity: 0.5
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
-                }
-              }
-              Text {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
-                text: "No player stats available"
-                color: root.barForeground
-                opacity: 0.5
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
-
+                visible: !root.detailPlayerGroups                }
                 Text {
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
-                  visible: root.detailTab === 0 && root.detailStats && root.detailStats.length === 0
-                  text: "No stats available"
+                  visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
+                  text: "No player stats available"
                   color: root.barForeground
                   opacity: 0.5
                   font.pixelSize: Style.font.bodySmall
                 }
               }
+              // Plays tab (2) — full play-by-play, richer
+              Column {
+                width: parent.width
+                spacing: Style.space(8)
+                visible: root.detailTab === 2
+                Text {
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  visible: (!root.detailDrives || root.detailDrives.length === 0) && (!root.detailPlays || root.detailPlays.length === 0)
+                  text: "No plays available"
+                  color: root.barForeground
+                  opacity: 0.5
+                  font.pixelSize: Style.font.caption
+                }
+                // Drive-grouped when available (NFL)
+                Column {
+                  width: parent.width
+                  spacing: Style.space(10)
+                  visible: root.detailDrives && root.detailDrives.length > 0
+                  Repeater {
+                    model: root.detailDrives.length > 12 ? root.detailDrives.slice(root.detailDrives.length - 12) : root.detailDrives
+                    delegate: Column {
+                      required property var modelData
+                      width: parent.width
+                      spacing: Style.space(4)
+                      RowLayout {
+                        width: parent.width
+                        spacing: Style.space(8)
+                        Text {
+                          text: modelData.team ? (modelData.team.abbreviation || modelData.team.displayName) : ""
+                          color: root.barForeground
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+                        Text {
+                          Layout.fillWidth: true
+                          text: (modelData.description || "") + (modelData.displayResult ? " \u00b7 " + modelData.displayResult : (modelData.result ? " \u00b7 " + modelData.result : ""))
+                          color: root.barForeground
+                          opacity: 0.55
+                          font.pixelSize: Style.font.caption
+                          elide: Text.ElideRight
+                        }
+                        Rectangle {
+                          Layout.preferredWidth: resultText.implicitWidth + Style.space(8)
+                          height: Style.space(16)
+                          radius: 3
+                          color: modelData.isScore ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15) : Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                          visible: modelData.displayResult || modelData.result || modelData.shortDisplayResult
+                          Text {
+                            id: resultText
+                            anchors.centerIn: parent
+                            text: modelData.displayResult || modelData.shortDisplayResult || modelData.result || ""
+                            color: modelData.isScore ? Color.accent : root.barForeground
+                            opacity: modelData.isScore ? 1 : 0.7
+                            font.pixelSize: Style.font.caption
+                            font.bold: modelData.isScore
+                          }
+                        }
+                      }
+                      Repeater {
+                        model: modelData.plays || []
+                        delegate: Rectangle {
+                          required property var modelData
+                          required property int index
+                          width: parent.width
+                          height: drivePlayRow.implicitHeight + Style.space(6)
+                          color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : (index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent")
+                          radius: 4
+                          border.width: modelData.scoringPlay ? 1 : 0
+                          border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)
+                          RowLayout {
+                            id: drivePlayRow
+                            anchors.fill: parent
+                            anchors.leftMargin: Style.space(6)
+                            anchors.rightMargin: Style.space(6)
+                            anchors.topMargin: Style.space(4)
+                            anchors.bottomMargin: Style.space(4)
+                            spacing: Style.space(8)
+                            Rectangle {
+                              Layout.preferredWidth: Style.space(44)
+                              Layout.alignment: Qt.AlignTop
+                              height: Style.space(16)
+                              radius: 3
+                              color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                              visible: (modelData.clock && modelData.clock.displayValue) || (modelData.period && modelData.period.displayValue)
+                              Text {
+                                anchors.centerIn: parent
+                                text: (modelData.period && modelData.period.displayValue ? modelData.period.displayValue + " " : (modelData.period && modelData.period.number ? "Q" + modelData.period.number + " " : "")) + (modelData.clock && modelData.clock.displayValue ? modelData.clock.displayValue : "")
+                                color: root.barForeground
+                                opacity: 0.7
+                                font.pixelSize: Style.font.caption
+                                font.family: "Monospace"
+                              }
+                            }
+                            Text {
+                              Layout.fillWidth: true
+                              text: modelData.text || modelData.description || ""
+                              color: modelData.scoringPlay ? Color.accent : root.barForeground
+                              font.pixelSize: Style.font.caption
+                              wrapMode: Text.WordWrap
+                              opacity: modelData.scoringPlay ? 1 : 0.85
+                            }
+                            Text { visible: modelData.scoringPlay; text: "\u25CF"; color: Color.accent; font.pixelSize: Style.font.caption; Layout.alignment: Qt.AlignTop }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                // Flat fallback (NBA/MLB/Soccer or when drives empty)
+                Column {
+                  width: parent.width
+                  spacing: Style.space(4)
+                  visible: (!root.detailDrives || root.detailDrives.length === 0) && root.detailPlays && root.detailPlays.length > 0
+                  Repeater {
+                    model: root.detailPlays && root.detailPlays.length > 60 ? root.detailPlays.slice(root.detailPlays.length - 60) : (root.detailPlays || [])
+                    delegate: Rectangle {
+                      required property var modelData
+                      required property int index
+                      width: parent.width
+                      height: playRow.implicitHeight + Style.space(6)
+                      color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : (index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent")
+                      radius: 4
+                      border.width: modelData.scoringPlay ? 1 : 0
+                      border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)
+                      RowLayout {
+                        id: playRow
+                        anchors.fill: parent
+                        anchors.leftMargin: Style.space(6)
+                        anchors.rightMargin: Style.space(6)
+                        anchors.topMargin: Style.space(4)
+                        anchors.bottomMargin: Style.space(4)
+                        spacing: Style.space(8)
+                        Rectangle {
+                          Layout.preferredWidth: Style.space(44)
+                          Layout.alignment: Qt.AlignTop
+                          height: Style.space(16)
+                          radius: 3
+                          color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                          visible: (modelData.clock && modelData.clock.displayValue) || (modelData.period && modelData.period.displayValue)
+                          Text {
+                            anchors.centerIn: parent
+                            text: (modelData.period && modelData.period.displayValue ? modelData.period.displayValue + " " : (modelData.period && modelData.period.number ? "Q" + modelData.period.number + " " : "")) + (modelData.clock && modelData.clock.displayValue ? modelData.clock.displayValue : "")
+                            color: root.barForeground
+                            opacity: 0.7
+                            font.pixelSize: Style.font.caption
+                            font.family: "Monospace"
+                          }
+                        }
+                        Text {
+                          Layout.fillWidth: true
+                          text: modelData.text || modelData.description || modelData.shortText || ""
+                          color: modelData.scoringPlay ? Color.accent : root.barForeground
+                          font.pixelSize: Style.font.caption
+                          wrapMode: Text.WordWrap
+                          opacity: modelData.scoringPlay ? 1 : 0.85
+                        }
+                        Text {
+                          visible: modelData.scoringPlay
+                          text: "\u25CF"
+                          color: Color.accent
+                          font.pixelSize: Style.font.caption
+                          Layout.alignment: Qt.AlignTop
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              // Insights tab (3) — B, F preview, H, I, J with richer visuals
+              Column {
+                width: parent.width
+                spacing: Style.space(12)
+                visible: root.detailTab === 3
+                // B: Leaders with headshots
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: root.detailLeaders && root.detailLeaders.length > 0
+                  Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Leaders"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Repeater {
+                    model: root.detailLeaders
+                    delegate: Column {
+                      required property var modelData
+                      width: parent.width
+                      spacing: Style.space(6)
+                      RowLayout {
+                        width: parent.width
+                        spacing: Style.space(8)
+                        Rectangle { width: Style.space(24); height: Style.space(24); radius: 12; clip: true; color: "transparent"; visible: modelData.team && modelData.team.logo; Image { anchors.fill: parent; source: modelData.team.logo || ""; fillMode: Image.PreserveAspectFit; asynchronous: true; cache: true } }
+                        Text { text: modelData.team ? (modelData.team.abbreviation || modelData.team.displayName) : ""; color: root.barForeground; opacity: 0.6; font.pixelSize: Style.font.caption; font.bold: true; Layout.fillWidth: true }
+                      }
+                      Repeater {
+                        model: modelData.leaders || []
+                        delegate: RowLayout {
+                          required property var modelData
+                          property var leader: modelData.leaders && modelData.leaders.length ? modelData.leaders[0] : null
+                          width: parent.width
+                          spacing: Style.space(8)
+                          Rectangle {
+                            Layout.preferredWidth: Style.space(28); Layout.preferredHeight: Style.space(28); radius: 14; clip: true; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                            Image {
+                              anchors.fill: parent
+                              source: leader && leader.athlete && leader.athlete.headshot ? leader.athlete.headshot.href : ""
+                              fillMode: Image.PreserveAspectCrop
+                              asynchronous: true; cache: true
+                            }
+                          }
+                          Column {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text { text: leader && leader.athlete ? (leader.athlete.displayName || leader.athlete.shortName) : ""; color: root.barForeground; font.pixelSize: Style.font.caption; elide: Text.ElideRight; font.bold: true }
+                            Text { text: (leader && leader.athlete && leader.athlete.position ? leader.athlete.position.abbreviation + " \u00b7 " : "") + (modelData.displayName || modelData.name || ""); color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption }
+                          }
+                          Text { text: leader ? (leader.displayValue || leader.value || "") : ""; color: Color.accent; font.pixelSize: Style.font.caption; font.bold: true; font.family: "Monospace" }
+                        }
+                      }
+                    }
+                  }
+                }
+                // F preview in Insights (compact)
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: root.detailPlays && root.detailPlays.length > 0
+                  PanelSeparator { foreground: root.barForeground }
+                  Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Recent Plays"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Repeater {
+                    model: root.detailPlays.length > 5 ? root.detailPlays.slice(root.detailPlays.length - 5) : (root.detailPlays || [])
+                    delegate: Rectangle {
+                      required property var modelData
+                      required property int index
+                      width: parent.width
+                      height: miniPlay.implicitHeight + Style.space(6)
+                      color: index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent"
+                      radius: 2
+                      Text {
+                        id: miniPlay
+                        anchors.fill: parent
+                        anchors.margins: Style.space(6)
+                        text: (modelData.clock ? modelData.clock.displayValue + " " : "") + (modelData.text || modelData.description || "")
+                        color: modelData.scoringPlay ? Color.accent : root.barForeground
+                        font.pixelSize: Style.font.caption
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        opacity: modelData.scoringPlay ? 1 : 0.7
+                      }
+                    }
+                  }
+                  Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: root.detailPlays && root.detailPlays.length > 5 ? "See Plays tab for full list \u2192" : ""
+                    color: Color.accent
+                    opacity: 0.6
+                    font.pixelSize: Style.font.caption
+                    visible: root.detailPlays && root.detailPlays.length > 5
+                    MouseArea { anchors.fill: parent; onClicked: root.detailTab = 2; cursorShape: Qt.PointingHandCursor }
+                  }
+                }
+                // H: Standings with conference + W/L/T headers
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: root.detailStandings && root.detailStandings.groups && root.detailStandings.groups.length > 0
+                  PanelSeparator { foreground: root.barForeground }
+                  Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Standings"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Repeater {
+                    model: root.detailStandings ? root.detailStandings.groups : []
+                    delegate: Column {
+                      required property var modelData
+                      required property int index
+                      width: parent.width
+                      spacing: Style.space(2)
+                      Item { width: parent.width; height: index === 0 ? 0 : Style.space(10) }
+                      Rectangle {
+                        width: parent.width
+                        height: Style.space(16)
+                        color: "transparent"
+                        RowLayout {
+                          anchors.fill: parent
+                          anchors.leftMargin: Style.space(6)
+                          anchors.rightMargin: Style.space(6)
+                          spacing: Style.space(8)
+                          Text { Layout.fillWidth: true; text: modelData.conferenceHeader || modelData.divisionHeader || modelData.header || ""; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true; elide: Text.ElideRight }
+                          Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "W"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "L"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "T"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                        }
+                      }
+                      Repeater {
+                        model: modelData.standings ? modelData.standings.entries.slice(0, 5) : []
+                        delegate: Rectangle {
+                          required property var modelData
+                          required property int index
+                          width: parent.width
+                          height: Style.space(20)
+                          property bool isCurrent: (root.selectedGame && ((String(modelData.id) === String(root.selectedGame.away.id)) || (String(modelData.id) === String(root.selectedGame.home.id)))) || (modelData.team && root.selectedGame && (modelData.team.indexOf(root.selectedGame.away.abbr) >= 0 || modelData.team.indexOf(root.selectedGame.home.abbr) >= 0))
+                          color: isCurrent ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : (index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent")
+                          radius: 2
+                          border.width: isCurrent ? 1 : 0
+                          border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.35)
+                          RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: Style.space(6)
+                            anchors.rightMargin: Style.space(6)
+                            spacing: Style.space(8)
+                            Text { Layout.fillWidth: true; text: modelData.team || modelData.displayName || ""; color: isCurrent ? Color.accent : root.barForeground; font.pixelSize: Style.font.caption; elide: Text.ElideRight; font.bold: isCurrent }
+                            Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["wins","W"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
+                            Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["losses","L"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
+                            Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["ties","T"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                // I: Injuries
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: root.detailInjuries && root.detailInjuries.length > 0
+                  PanelSeparator { foreground: root.barForeground }
+                  Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Injuries"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Repeater {
+                    model: root.detailInjuries
+                    delegate: Column {
+                      required property var modelData
+                      width: parent.width
+                      spacing: Style.space(2)
+                      Text { width: parent.width; text: modelData.team ? modelData.team.abbreviation : ""; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true }
+                      Repeater {
+                        model: (modelData.injuries || modelData.players || []).slice(0, 3)
+                        delegate: Text {
+                          required property var modelData
+                          width: parent.width
+                          text: (modelData.athlete ? modelData.athlete.displayName : modelData.displayName || "") + (modelData.status ? " \u2013 " + modelData.status : "")
+                          color: root.barForeground
+                          opacity: 0.6
+                          font.pixelSize: Style.font.caption
+                          elide: Text.ElideRight
+                          wrapMode: Text.WordWrap
+                        }
+                      }
+                    }
+                  }
+                }
+                // J: News / Videos
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: (root.detailNews && root.detailNews.length > 0) || (root.detailVideos && root.detailVideos.length > 0)
+                  PanelSeparator { foreground: root.barForeground }
+                  Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Related"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Repeater {
+                    model: root.detailNews
+                    delegate: Text {
+                      required property var modelData
+                      width: parent.width
+                      text: "\u25B6 " + (modelData.headline || modelData.title || "")
+                      color: Color.accent
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                      wrapMode: Text.WordWrap
+                      maximumLineCount: 2
+                      MouseArea { anchors.fill: parent; onClicked: Qt.openUrlExternally(modelData.links && modelData.links.web ? modelData.links.web.href : modelData.link ? modelData.link.href : "") ; cursorShape: Qt.PointingHandCursor }
+                    }
+                  }
+                  Repeater {
+                    model: root.detailVideos
+                    delegate: Text {
+                      required property var modelData
+                      width: parent.width
+                      text: "\u25B6 " + (modelData.headline || modelData.description || "")
+                      color: Color.accent
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                      wrapMode: Text.WordWrap
+                      maximumLineCount: 2
+                      MouseArea { anchors.fill: parent; onClicked: Qt.openUrlExternally(modelData.links && modelData.links.source ? modelData.links.source.href : modelData.link ? modelData.link.href : "") ; cursorShape: Qt.PointingHandCursor }
+                    }
+                  }
+                }
+                Text {
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  visible: (!root.detailLeaders || root.detailLeaders.length === 0) && (!root.detailPlays || root.detailPlays.length === 0) && (!root.detailStandings || !root.detailStandings.groups) && (!root.detailInjuries || root.detailInjuries.length === 0) && (!root.detailNews || root.detailNews.length === 0) && (!root.detailVideos || root.detailVideos.length === 0)
+                  text: "No insights for this game"
+                  color: root.barForeground
+                  opacity: 0.4
+                  font.pixelSize: Style.font.caption
+                }
+              }
             }
-          }
         }
       }
-    
-  
+    }
+  }
+}
 
+}
