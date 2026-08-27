@@ -213,6 +213,8 @@ function parseGames(raw) {
             var c = cs[j]
             g[c.homeAway] = { id: c.team.id, abbr: c.team.abbreviation, name: c.team.displayName, score: c.score, logo: c.team.logo, color: c.team.color, record: c.records && c.records[0] ? c.records[0].summary : "" }
         }
+        var oddsArr = comp.odds || []
+        if (oddsArr.length && oddsArr[0].details) g.odds = oddsArr[0].details + " \u00b7 O/U " + oddsArr[0].overUnder
         if (g.away && g.home) out.push(g)
     }
     return { games: out, error: out.length ? "" : "No games scheduled" }

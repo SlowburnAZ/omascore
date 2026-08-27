@@ -26,6 +26,7 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 - Tap a game to open the **details panel** with full stats, venue, and player lists.
 - Use the **league switcher** pills at the top to change between NFL, CFB, NBA, WNBA, NCAAM, NCAAW, MLB, NHL, MLS, EPL, LaLiga, Bundesliga, Serie A, Ligue 1, UCL.
 - Score changes for favorited teams raise a desktop notification — toggle it and **Hide finished games** in the panel's **Settings** screen (gear icon, top right of the panel header), or `omarchy bar set slowburnaz.omascore notifications false`.
+- **Pre-game odds**: spread and over/under appear on upcoming games by default — toggle off via **Show pre-game odds** in Settings.
 
 ### Details Panel
 

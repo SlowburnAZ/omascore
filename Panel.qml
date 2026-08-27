@@ -43,12 +43,18 @@ Panel {
     var v = w.setting("notifications", true)
     return v !== false && v !== "false"
   }
-  function setNotify(on) {
+  readonly property bool showOdds: {
+    var w = root.hostWidget
+    if (!w || typeof w.setting !== "function") return true
+    var v = w.setting("showOdds", true)
+    return v !== false && v !== "false"
+  }
+  function setSetting(key, val) {
     var w = root.hostWidget
     if (!w) return
     var entry = { id: w.moduleName }
     for (var k in w.settings) if (k !== "id") entry[k] = w.settings[k]
-    entry.notifications = on
+    entry[key] = val
     w.settings = entry
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(w.moduleName, entry)
@@ -743,7 +749,7 @@ Panel {
               Text {
                 width: parent.width
                 horizontalAlignment: Text.AlignRight
-                text: modelData ? modelData.detail : ""
+                text: modelData ? modelData.detail + (root.showOdds && modelData.state === "pre" && modelData.odds ? "  \u00b7  " + modelData.odds : "") : ""
                 color: modelData ? root.statusColor(modelData.state) : root.barForeground
                 opacity: modelData && modelData.state === "in" ? 1.0 : 0.6
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -790,7 +796,18 @@ Panel {
               foreground: root.barForeground
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.setNotify(!root.notifyEnabled)
+              onClicked: root.setSetting("notifications", !root.notifyEnabled)
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Show pre-game odds"
+              description: "Spread and over/under on upcoming games"
+              checked: root.showOdds
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.setSetting("showOdds", !root.showOdds)
             }
 
             Toggle {
