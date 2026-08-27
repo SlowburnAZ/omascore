@@ -23,6 +23,7 @@ Panel {
 
   readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
   readonly property string oldStorePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
+  readonly property string backupPath: Quickshell.env("HOME") + "/.config/omarchy/omascore-favorites.json"
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
 
@@ -68,7 +69,27 @@ Panel {
 
   function isFav(abbr) { return Model.isFav(root.favorites, abbr, root.currentLeagueId) }
   function loadFavorites(raw) { root.favorites = Model.parseFavorites(raw) }
-  function saveFavorites() { store.setText(JSON.stringify(root.favorites, null, 2) + "\n") }
+  function saveFavorites() {
+    var txt = JSON.stringify(root.favorites, null, 2) + "\n"
+    store.setText(txt)
+    // ponytail: mirror to config backup so disable/remove/re-add survives state GC
+    try { backupStore.setText(txt) } catch(e) {}
+  }
+  function restoreFromBackupIfNeeded() {
+    if (Object.keys(root.favorites).length !== 0) return
+    try {
+      var bt = backupStore.text()
+      if (bt && bt.trim()) {
+        var parsed = Model.parseFavorites(bt)
+        if (Object.keys(parsed).length !== 0) {
+          root.favorites = parsed
+          store.setText(bt)
+          root.games = root.sorted(root.games)
+          root.recount()
+        }
+      }
+    } catch(e) {}
+  }
   function toggleFav(abbr) {
     root.favorites = Model.toggleFavMap(root.favorites, root.currentLeagueId, abbr)
     root.saveFavorites()
@@ -200,15 +221,46 @@ Panel {
     printErrors: false
     onLoaded: {
       root.loadFavorites(text())
-      if (Object.keys(root.favorites).length == 0) oldStore.reload()
+      if (Object.keys(root.favorites).length == 0) {
+        // try backup before legacy (only when state empty)
+        root.restoreFromBackupIfNeeded()
+        if (Object.keys(root.favorites).length == 0) oldStore.reload()
+      }
       root.games = root.sorted(root.games)
       root.recount()
     }
     onLoadFailed: {
       root.loadFavorites("{}")
-      oldStore.reload()
+      root.restoreFromBackupIfNeeded()
+      if (Object.keys(root.favorites).length == 0) oldStore.reload()
     }
     onFileChanged: reload()
+  }
+  FileView {
+    id: backupStore
+    path: root.backupPath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    blockLoading: true
+    onLoaded: {
+      // only authoritative when state is empty (e.g. after remove where state was GC'd)
+      if (Object.keys(root.favorites).length === 0) {
+        var bt = text() || ""
+        if (bt.trim()) {
+          try {
+            var parsed = Model.parseFavorites(bt)
+            if (Object.keys(parsed).length !== 0) {
+              root.favorites = parsed
+              store.setText(bt)
+              root.games = root.sorted(root.games)
+              root.recount()
+            }
+          } catch(e) {}
+        }
+      }
+    }
+    onLoadFailed: { /* first run: no backup yet */ }
   }
   FileView {
     id: oldStore
@@ -216,10 +268,14 @@ Panel {
     watchChanges: false
     atomicWrites: false
     printErrors: false
+    blockLoading: true
     onLoaded: {
       var txt = text() || ""
       if (!txt.trim()) return
       if (Object.keys(root.favorites).length != 0) return
+      // also abort if state already has content on disk (race: store loaded but favorites not yet set)
+      try { var st = store.text(); if (st && st.trim() && st.trim() !== "{}") return } catch(e) {}
+      try { var bt = backupStore.text(); if (bt && bt.trim() && bt.trim() !== "{}") return } catch(e) {}
       try {
         var arr = JSON.parse(txt)
         if (Array.isArray(arr) && arr.length) {
@@ -1307,7 +1363,7 @@ Repeater {
                           required property int index
                           width: parent.width
                           height: drivePlayRow.implicitHeight + Style.space(6)
-                          color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : (index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent")
+                          color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : "transparent"
                           radius: 4
                           border.width: modelData.scoringPlay ? 1 : 0
                           border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)
@@ -1362,7 +1418,7 @@ Repeater {
                       required property int index
                       width: parent.width
                       height: playRow.implicitHeight + Style.space(6)
-                      color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : (index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent")
+                      color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : "transparent"
                       radius: 4
                       border.width: modelData.scoringPlay ? 1 : 0
                       border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)

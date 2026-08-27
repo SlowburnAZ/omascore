@@ -30,7 +30,7 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 
 - **Overall tab**: Team statistics split by home/away with a vertical divider (labels are league-specific).
 - **Players tab**: Player statistics grouped by category with a fixed 110px Player column and horizontally scrollable stat columns.
-- **Favorites**: Teams saved per-league to `~/.local/state/omarchy/omascore-favorites.json` (migrated from old `nfl-favorites.json`) appear pinned at the top of the game list, above live games.
+- **Favorites**: Teams saved per-league to `~/.local/state/omarchy/omascore-favorites.json` (migrated from old `nfl-favorites.json`) appear pinned at the top of the game list, above live games. Mirrored to `~/.config/omarchy/omascore-favorites.json` so `omarchy plugin disable` / `remove` + `add`/`enable` persists unless you delete both files.
 - **Logos**: Team logos loaded from ESPN network sources (transparent PNG).
 
 ### Navigation
