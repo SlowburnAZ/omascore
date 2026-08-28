@@ -113,6 +113,7 @@ Panel {
   property var weekDates: []
   property var hasGames: [false,false,false,false,false,false,false]
   property int selectedDay: 0
+  readonly property int todayIndex: root.weekDateStrs.indexOf(Model.ymd(new Date()))
   property var dayLabels: Model.dayLabels
   property var monthLabels: Model.monthLabels
   // week fetch: one week-range scoreboard request, dots computed locally
@@ -391,12 +392,25 @@ Panel {
     root.prevScores = next
   }
   function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
-  // ESPN colors are 6-hex without "#" and often near-black; lift lightness so they read on the dark panel
+  // ESPN colors are 6-hex without "#" and often near-black; blend toward the theme
+  // foreground until the hue passes 4.5:1 contrast on the actual panel surface, so
+  // any team color stays legible (dark navy lifts, bright colors pass unchanged)
   function teamColor(hex) {
     var h = (hex || "").replace("#", "")
     if (!/^[0-9a-fA-F]{6}$/.test(h)) return Color.accent
     var c = Qt.rgba(parseInt(h.substring(0, 2), 16) / 255, parseInt(h.substring(2, 4), 16) / 255, parseInt(h.substring(4, 6), 16) / 255, 1)
-    return Qt.hsla(c.hslHue < 0 ? 0 : c.hslHue, c.hslSaturation, Math.max(c.hslLightness, 0.55), 1)
+    var bg = Color.popups.background
+    for (var i = 0; i < 4 && contrastRatio(c, bg) < 4.5; i++)
+      c = Qt.rgba(c.r + (root.barForeground.r - c.r) * 0.35, c.g + (root.barForeground.g - c.g) * 0.35, c.b + (root.barForeground.b - c.b) * 0.35, 1)
+    return c
+  }
+  function luminance(c) {
+    function lin(v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+    return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+  }
+  function contrastRatio(a, b) {
+    var la = luminance(a), lb = luminance(b)
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
   }
   function statNum(s) { var t = (s || "").trim(); return /^-?\d+(\.\d+)?$/.test(t) ? parseFloat(t) : 0 }
   function moveCursor(dy) {
@@ -809,6 +823,18 @@ Panel {
                     opacity: root.selectedDay === index ? 1 : 0.9
                   }
                 }
+
+                // today marker, independent of the selection
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  anchors.bottom: parent.bottom
+                  width: parent.width / 2
+                  height: 2
+                  radius: 1
+                  visible: index === root.todayIndex && root.selectedDay !== index
+                  color: root.barForeground
+                  opacity: 0.55
+                }
               }
             }
 
@@ -837,29 +863,67 @@ Panel {
           Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: root.lastError
+            text: {
+              if (root.lastError !== "No games scheduled") return root.lastError
+              var day = root.weekDates.length === 7 ? root.dayLabels[root.selectedDay] + " " + root.weekDates[root.selectedDay].getDate() : "this day"
+              var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
+              if (nxt >= 0) return "No games " + day + " \u2014 next up " + root.dayLabels[nxt]
+              return "No games " + day + " \u2014 try \u203A for next week"
+            }
             visible: root.lastError !== "" && root.games.length === 0 && root.listVisible
-            color: root.urgentColor
+            color: root.lastError === "No games scheduled" ? root.barForeground : root.urgentColor
+            opacity: root.lastError === "No games scheduled" ? 0.6 : 1
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
             elide: Text.ElideRight
           }
 
-          Text {
+          // skeleton rows shaped like game rows; visible only while waiting on the first load
+          Column {
+            id: loadingSkeleton
             width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: "Loading scores\u2026"
+            spacing: Style.space(12)
             visible: root.games.length === 0 && root.lastError === "" && root.listVisible
-            color: root.barForeground
-            opacity: 0.6
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
+
+            Repeater {
+              model: 3
+              delegate: Column {
+                required property int index
+                width: parent.width
+                spacing: Style.space(6)
+
+                Repeater {
+                  model: 2
+                  delegate: Row {
+                    required property int index
+                    width: parent.width
+                    spacing: Style.space(8)
+                    Rectangle { width: Style.space(20); height: Style.space(20); radius: Style.space(10); color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.09) }
+                    Rectangle { width: parent.width - Style.space(64); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07) }
+                    Rectangle { width: Style.space(28); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.05) }
+                  }
+                }
+                Rectangle {
+                  width: Style.space(64); height: Style.space(7); radius: Style.space(3)
+                  anchors.right: parent.right
+                  color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
+                }
+
+                SequentialAnimation on opacity {
+                  running: loadingSkeleton.visible
+                  loops: Animation.Infinite
+                  PauseAnimation { duration: index * 180 }
+                  NumberAnimation { to: 0.35; duration: 650; easing.type: Easing.InOutQuad }
+                  NumberAnimation { to: 1; duration: 650; easing.type: Easing.InOutQuad }
+                }
+              }
+            }
           }
 
           Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: "All games finished"
+            text: "All games finished \u2014 unhide them in Settings"
             visible: root.games.length > 0 && root.shownGames.length === 0 && root.listVisible
             color: root.barForeground
             opacity: 0.5
