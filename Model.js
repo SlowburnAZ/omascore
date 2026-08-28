@@ -299,10 +299,12 @@ function fetchArgs(dateStr, leagueId) {
     if (!/^\d{8}$/.test(String(dateStr || ""))) return null
     return ["curl", "-fsS", "--max-time", "10", "--max-filesize", MAX_BYTES, scoreboardUrl(dateStr, leagueId)]
 }
-// Argument-array curl for one day of the has-games week scan.
-function weekArgs(dateStr, leagueId) {
-    if (!/^\d{8}$/.test(String(dateStr || ""))) return null
-    return ["curl", "-fsS", "--max-time", "5", "--max-filesize", MAX_BYTES, scoreboardUrl(dateStr, leagueId)]
+// Argument-array curl for one week-range scoreboard fetch (no shell involved).
+function weekArgs(dateStrs, leagueId) {
+    if (!Array.isArray(dateStrs) || dateStrs.length !== 7) return null
+    if (!/^\d{8}$/.test(dateStrs[0]) || !/^\d{8}$/.test(dateStrs[6])) return null
+    var L = leagueFor(leagueId)
+    return ["curl", "-fsS", "--max-time", "8", "--max-filesize", MAX_BYTES, apiUrlFor(L.sport, L.league) + "?dates=" + dateStrs[0] + "-" + dateStrs[6]]
 }
 function standingsUrlFor(sport, league) { return "https://site.api.espn.com/apis/v2/sports/" + sport + "/" + league + "/standings" }
 
@@ -370,15 +372,23 @@ function parseGames(raw) {
     return { games: out, error: out.length ? "" : "No games scheduled" }
 }
 
-// Week scan: one curl per day (argument-array, no shell) whose raw response is a
-// single-day scoreboard — only the event count matters for the dot indicators.
-function parseWeekDay(raw) {
+// One week-range scoreboard fetch (?dates=A-B) covers the whole selector week;
+// bucket each event by its LOCAL calendar day so dots match the panel's days.
+function parseWeekRange(raw, weekDateStrs) {
+    var out = [false, false, false, false, false, false, false]
     var txt = String(raw || "").trim()
-    if (!txt) return 0
+    if (!txt) return out
     var d = parseBoundedJson(txt)
-    if (!d || typeof d !== "object") return 0
+    if (!d || typeof d !== "object") return out
     var events = Array.isArray(d.events) ? d.events : []
-    return Math.min(events.length, MAX_EVENTS)
+    var cap = Math.min(events.length, MAX_EVENTS * 7)
+    for (var i = 0; i < cap; i++) {
+        var e = events[i]
+        if (!e || !e.date) continue
+        var idx = weekDateStrs.indexOf(ymd(new Date(e.date)))
+        if (idx >= 0) out[idx] = true
+    }
+    return out
 }
 
 function nextSelectedDay(hasGames, selectedDay) {

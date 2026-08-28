@@ -115,9 +115,7 @@ Panel {
   property int selectedDay: 0
   property var dayLabels: Model.dayLabels
   property var monthLabels: Model.monthLabels
-  // week scan queue: one argv curl per day, drained sequentially by weekProc
-  property var weekQueue: []
-  property string weekFetchDay: ""
+  // week fetch: one week-range scoreboard request, dots computed locally
   property string weekFetchLeague: ""
 
   property var selectedGame: null
@@ -220,16 +218,9 @@ Panel {
   function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.cursorIndex = -1; root.refreshSelected() }
   function checkWeekGames() {
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
-    root.weekQueue = root.weekDateStrs.slice()
+    var args = Model.weekArgs(root.weekDateStrs, root.currentLeagueId)
+    if (!args) return
     root.weekFetchLeague = root.currentLeagueId
-    root.fetchNextWeekDay()
-  }
-  function fetchNextWeekDay() {
-    var d = root.weekQueue.length ? root.weekQueue.shift() : ""
-    if (!d) return
-    var args = Model.weekArgs(d, root.currentLeagueId)
-    if (!args) { root.fetchNextWeekDay(); return }
-    root.weekFetchDay = d
     weekProc.running = false; weekProc.command = args; weekProc.running = true
   }
   function refreshSelected() {
@@ -289,7 +280,8 @@ Panel {
   function safeHref(u) { u = String(u || ""); return /^https:\/\//.test(u) ? u : "" }
   function parseGames(raw, silent) {
     var txt = String(raw||"").trim()
-    if (!txt) { root.games = []; root.lastError = ""; root.recount(); return }
+    // empty response = failed fetch (curl -f swallows HTTP errors): keep last good list
+    if (!txt) { root.recount(); return }
     try {
       var r = Model.parseGames(txt)
       root.games = root.sorted(r.games)
@@ -545,16 +537,12 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         // abandon a scan for a league we've already left
-        if (root.weekFetchLeague !== root.currentLeagueId) { root.weekQueue = []; return }
+        if (root.weekFetchLeague !== root.currentLeagueId) return
         var t = root.gated(text)
-        var n = (t === null) ? 0 : Model.parseWeekDay(t)
-        var idx = root.weekDateStrs.indexOf(root.weekFetchDay)
-        if (idx >= 0 && n > 0) { var a = root.hasGames.slice(); a[idx] = true; root.hasGames = a }
-        root.fetchNextWeekDay()
-        if (root.weekQueue.length === 0) {
-          var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
-          if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
-        }
+        if (t === null) return
+        root.hasGames = Model.parseWeekRange(t, root.weekDateStrs)
+        var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
+        if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
       }
     }
   }
@@ -893,24 +881,46 @@ Panel {
               width: parent.width
               spacing: Style.space(4)
 
-              Rectangle {
-                id: flashRect
-                anchors.fill: parent
-                anchors.margins: -Style.space(4)
-                z: -1
-                readonly property string gid: modelData ? modelData.id : ""
-                readonly property bool flashing: root.flashTick >= 0 && (root.scoreFlash[gid] || 0) > 0 && new Date().getTime() - root.scoreFlash[gid] < 700
-                onFlashingChanged: if (flashing) flashExpire.restart()
-                visible: index === root.cursorIndex || flashing || color.a > 0
-                color: index === root.cursorIndex
-                  ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
-                  : (flashing ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.28) : "transparent")
-                radius: Style.space(6)
-                Behavior on color { ColorAnimation { duration: 350 } }
-                Timer {
-                  id: flashExpire
-                  interval: 700
-                  onTriggered: root.flashTick++
+              // anchor host: positioner Columns forbid anchors on direct children,
+              // so flashRect anchors to this zero-height flow item instead
+              Item {
+                width: parent.width
+                implicitHeight: 0
+                Rectangle {
+                  id: flashRect
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(4)
+                  z: -1
+                  readonly property string gid: modelData ? modelData.id : ""
+                  readonly property bool flashing: root.flashTick >= 0 && (root.scoreFlash[gid] || 0) > 0 && new Date().getTime() - root.scoreFlash[gid] < 700
+                  onFlashingChanged: if (flashing) flashExpire.restart()
+                  visible: index === root.cursorIndex || flashing || color.a > 0 || (modelData && modelData.state === "in")
+                  color: index === root.cursorIndex
+                    ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                    : (flashing ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.28) : "transparent")
+                  radius: Style.space(6)
+                  Behavior on color { ColorAnimation { duration: 350 } }
+                  Timer {
+                    id: flashExpire
+                    interval: 700
+                    onTriggered: root.flashTick++
+                  }
+                  // live-only pulse strip: sweep the list for "on now" without reading status text
+                  Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 3
+                    radius: 1.5
+                    visible: modelData && modelData.state === "in"
+                    color: root.urgentColor
+                    SequentialAnimation on opacity {
+                      running: parent.visible
+                      loops: Animation.Infinite
+                      NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutQuad }
+                      NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
+                    }
+                  }
                 }
               }
 
