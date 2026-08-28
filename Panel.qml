@@ -399,6 +399,14 @@ Panel {
     root.prevScores = next
   }
   function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
+  // ESPN colors are 6-hex without "#" and often near-black; lift lightness so they read on the dark panel
+  function teamColor(hex) {
+    var h = (hex || "").replace("#", "")
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return Color.accent
+    var c = Qt.rgba(parseInt(h.substring(0, 2), 16) / 255, parseInt(h.substring(2, 4), 16) / 255, parseInt(h.substring(4, 6), 16) / 255, 1)
+    return Qt.hsla(c.hslHue < 0 ? 0 : c.hslHue, c.hslSaturation, Math.max(c.hslLightness, 0.55), 1)
+  }
+  function statNum(s) { var t = (s || "").trim(); return /^-?\d+(\.\d+)?$/.test(t) ? parseFloat(t) : 0 }
   function moveCursor(dy) {
     if (!root.listVisible) return
     root.cursorIndex = Math.max(-1, Math.min(root.shownGames.length - 1, root.cursorIndex + dy))
@@ -1140,6 +1148,12 @@ Panel {
                     sourceSize.width: 64
                   }
                 }
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: 36; height: 3; radius: 1.5
+                  visible: root.detailTeams && root.detailTeams.away && (root.detailTeams.away.color || "") !== ""
+                  color: root.detailTeams && root.detailTeams.away ? root.teamColor(root.detailTeams.away.color) : Color.accent
+                }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.abbr : ""
@@ -1203,6 +1217,12 @@ Panel {
                     cache: true
                     sourceSize.width: 64
                   }
+                }
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: 36; height: 3; radius: 1.5
+                  visible: root.detailTeams && root.detailTeams.home && (root.detailTeams.home.color || "") !== ""
+                  color: root.detailTeams && root.detailTeams.home ? root.teamColor(root.detailTeams.home.color) : Color.accent
                 }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
@@ -1397,9 +1417,9 @@ Panel {
                     RowLayout {
                       width: parent.width
                       spacing: Style.space(8)
-                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
+                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                       Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: ""; }
-                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
+                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                     }
                     Rectangle { width: parent.width; height: 1; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08) }
                     Repeater {
@@ -1407,19 +1427,45 @@ Panel {
                       delegate: Rectangle {
                         required property var modelData
                         required property int index
+                        readonly property real numA: Math.max(0, root.statNum(modelData.away))
+                        readonly property real numH: Math.max(0, root.statNum(modelData.home))
+                        readonly property real shareA: numA + numH > 0 ? numA / (numA + numH) : 0
+                        readonly property color awayCol: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : Color.accent
+                        readonly property color homeCol: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : Color.accent
                         width: parent.width
                         height: row.implicitHeight + Style.space(4)
                         color: index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent"
                         radius: 2
+                        // diverging bars: grow outward from the center divider, length = share of the stat
+                        Rectangle {
+                          anchors.bottom: parent.bottom
+                          anchors.right: parent.horizontalCenter
+                          anchors.rightMargin: Style.space(88)
+                          visible: shareA > 0
+                          width: visible ? Math.max(2, shareA * (parent.width / 2 - Style.space(92))) : 0
+                          height: 2
+                          radius: 1
+                          color: Qt.rgba(awayCol.r, awayCol.g, awayCol.b, 0.8)
+                        }
+                        Rectangle {
+                          anchors.bottom: parent.bottom
+                          anchors.left: parent.horizontalCenter
+                          anchors.leftMargin: Style.space(88)
+                          visible: numH > 0
+                          width: visible ? Math.max(2, (1 - shareA) * (parent.width / 2 - Style.space(92))) : 0
+                          height: 2
+                          radius: 1
+                          color: Qt.rgba(homeCol.r, homeCol.g, homeCol.b, 0.8)
+                        }
                         RowLayout {
                           id: row
                           anchors.fill: parent
                           anchors.leftMargin: Style.space(4)
                           anchors.rightMargin: Style.space(4)
                           spacing: Style.space(8)
-                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: numA > numH ? awayCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                           Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: modelData.label; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
-                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: numH > numA ? homeCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                         }
                       }
                     }
@@ -1667,16 +1713,12 @@ Repeater {
               Text {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
-                visible: !root.detailPlayerGroups                }
-                Text {
-                  width: parent.width
-                  horizontalAlignment: Text.AlignHCenter
-                  visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
-                  text: "No player stats available"
-                  color: root.barForeground
-                  opacity: 0.5
-                  font.pixelSize: Style.font.bodySmall
-                }
+                visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
+                text: "No player stats available"
+                color: root.barForeground
+                opacity: 0.5
+                font.pixelSize: Style.font.bodySmall
+              }
               }
               // Plays tab (2) — full play-by-play, richer
               Column {
