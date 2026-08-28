@@ -239,7 +239,10 @@ function sanitize(v, listCap, strCap) {
         }
         if (Array.isArray(x)) {
             var a = []
-            for (var i = 0; i < x.length && i < listCap; i++) a.push(walk(x[i], depth + 1))
+            for (var i = 0; i < x.length && i < listCap; i++) {
+                var w = walk(x[i], depth + 1)
+                if (w !== null) a.push(w)
+            }
             return a
         }
         var o = {}
