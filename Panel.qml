@@ -82,20 +82,15 @@ Panel {
   readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
   readonly property string oldStorePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
   readonly property string backupPath: Quickshell.env("HOME") + "/.config/omarchy/omascore-favorites.json"
-  // State-dir files are user-replaceable (omarchy-plugin-marketplace#2934 re-review):
-  // before anything writes there, one startup stat pass (fixed argv, no shell)
-  // blacklists every candidate path that is not a regular file or missing, so a
-  // planted symlink/FIFO/directory is never read- or written-through.
+  // State-dir files are user-replaceable (omarchy-plugin-marketplace#2934 re-review).
+  // All claim/cache reads and writes go through the dd-based helpers below: reads
+  // open once with O_NOFOLLOW|O_NONBLOCK and are byte-capped on that same open, so
+  // a post-check path replacement cannot substitute another object and no probe or
+  // TOCTOU window exists; writes stage into an O_EXCL|O_NOFOLLOW temp (fsync'd) and
+  // publish via mv (rename), which replaces a planted symlink instead of following it.
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy"
-  readonly property var claimPaths: [
-    root.stateDir + "/omascore-notifications.json",
-    root.stateDir + "/omascore-notifications-1.json",
-    root.stateDir + "/omascore-notifications-2.json"
-  ]
-  property int claimPathIdx: 0          // index into claimPaths; -1 = all hostile: memory-only dedup
-  property bool claimsReady: false      // probe finished
-  property var memClaims: ({})          // quarantine fallback for claimPathIdx === -1
-  property var badPaths: ({})           // probed non-regular paths
+  readonly property string claimPath: root.stateDir + "/omascore-notifications.json"
+  property var memClaims: ({})          // authoritative claim map; merged with the file on every claim
   function cachePathFor(leagueId) { return root.stateDir + "/omascore-" + leagueId + "-cache.json" }
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
@@ -189,7 +184,6 @@ Panel {
   function setLeague(id) {
     if (id == root.currentLeagueId) return
     root.currentLeagueId = id
-    cacheStore.path = (root.claimsReady && !root.badPaths[root.cachePathFor(id)]) ? root.cachePathFor(id) : ""
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.games = []; root.lastError = ""
     root.prevScores = ({})
@@ -235,10 +229,14 @@ Panel {
   function refreshSelected() {
     var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
-    cacheStore.reload()
+    root.boundedRead(root.cachePathFor(root.currentLeagueId), Model.MAX_TEXT, root.cacheReadDone)
     var args = Model.fetchArgs(ds, root.currentLeagueId)
     if (!args) return
     fetchProc.running = false; fetchProc.command = args; fetchProc.running = true
+  }
+  function cacheReadDone(raw) {
+    var t = root.gated(raw)
+    if (t !== null && root.games.length === 0) root.parseGames(t, true)
   }
   function showDetail(game) {
     if (!game || !Model.validEventId(game.id)) return
@@ -298,63 +296,167 @@ Panel {
       if (!silent) root.checkScoreNotifications(r.games)
     } catch (e) { root.lastError = "Parse error" }
   }
-  FileView {
-    id: notifStore
-    path: root.claimPathIdx >= 0 ? root.claimPaths[root.claimPathIdx] : ""
-    watchChanges: false
-    printErrors: false
-    blockLoading: true
-    blockWrites: true
-    // atomic (temp + rename): concurrent per-panel claim writes can't tear, and a
-    // planted FIFO is replaced by the rename instead of being opened. Symlinks are
-    // handled by the startup probe (QSaveFile resolves them, so atomic alone is
-    // not a no-follow boundary — only never-touching a blacklisted path is).
-    atomicWrites: true
+  // ---- Bounded no-follow state-file I/O (omarchy-plugin-marketplace#2934) ----
+  // Reads: one dd per read, opened with O_NOFOLLOW|O_NONBLOCK and byte-capped by
+  // count*bs on that same open, so the decoded bytes come from the validated
+  // descriptor and nothing can be loaded past the cap. Symlinks fail with ELOOP,
+  // FIFOs return immediately (nonblock), a timeout(1) belt bounds anything that
+  // never yields EOF, and oversized/device files are truncated at the cap.
+  // Failure or missing file yields "".
+  readonly property int stateBs: 65536
+  property var readQueue: []
+  property var curRead: null
+  function boundedRead(path, cap, cb) {
+    if (!path) { cb(""); return }
+    root.readQueue.push({ path: path, cap: cap, cb: cb })
+    root.pumpRead()
   }
-  // Startup probe of every state path the panel writes: mark non-regular entries
-  // (symlink/FIFO/directory) hostile. Missing files are healthy (the writer creates
-  // them). One fixed-argv stat process for all candidates, all leagues included.
+  function pumpRead() {
+    if (readProc.running || !root.readQueue.length) return
+    var job = root.readQueue.shift()
+    root.curRead = job
+    readProc.running = false
+    readProc.command = ["/usr/bin/timeout", "2", "/usr/bin/dd", "if=" + job.path,
+      "iflag=nofollow,nonblock", "bs=" + root.stateBs,
+      "count=" + Math.ceil(job.cap / root.stateBs), "status=none"]
+    readProc.running = true
+  }
   Process {
-    id: pathProbe
+    id: readProc
     command: []
-    stdout: SplitParser {
-      onRead: line => {
-        var sp = line.indexOf(" ")
-        if (sp <= 0) return
-        var mode = parseInt(line.substring(0, sp), 16)
-        if (isNaN(mode) || (mode & 0xF000) === 0x8000) return
-        root.badPaths[line.substring(sp + 1)] = true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var job = root.curRead
+        root.curRead = null
+        if (job) {
+          var t = String(text)
+          job.cb(t.length > job.cap ? "" : t)   // dd already caps; belt for partial reads
+        }
+        root.pumpRead()
       }
     }
+    stderr: StdioCollector {}   // keep dd failure chatter out of the journal
   }
-  function probeDone() {
-    var idx = -1
-    for (var i = 0; i < root.claimPaths.length; i++) {
-      if (!root.badPaths[root.claimPaths[i]]) { idx = i; break }
+  // Writes: the payload is staged by dd into a same-directory O_EXCL|O_NOFOLLOW
+  // temp (fsync'd) and then published by mv (rename), which is atomic and
+  // replaces anything planted at the target — including symlinks — instead of
+  // following it. Any dd/mv failure leaves the target untouched (fail closed).
+  // validate: JSON round-trip before I/O (claims are cheap; cache payloads were
+  // already parsed upstream, so they skip the re-parse).
+  property var writeQueue: []
+  property var curWrite: null
+  function safePublish(path, str, cb, validate) {
+    if (!path) { if (cb) cb(false); return }
+    if (validate) { try { JSON.parse(str) } catch (e) { if (cb) cb(false); return } }
+    root.writeQueue.push({ path: path, str: str, cb: cb })
+    root.pumpWrite()
+  }
+  function pumpWrite() {
+    if (writeProc.running || publishProc.running || !root.writeQueue.length) return
+    var job = root.writeQueue.shift()
+    job.tmp = job.path + "." + new Date().getTime() + "." + Math.floor(Math.random() * 1000000) + ".tmp"
+    job.step = "dd"
+    root.curWrite = job
+    writeProc.stdinEnabled = true
+    writeProc.running = false
+    writeProc.command = ["/usr/bin/dd", "of=" + job.tmp, "oflag=nofollow", "conv=excl,fsync", "status=none"]
+    writeProc.running = true
+  }
+  function finishWrite(ok) {
+    var job = root.curWrite
+    root.curWrite = null
+    if (job && job.cb) job.cb(ok)
+    root.pumpWrite()
+  }
+  Process {
+    id: writeProc
+    command: []
+    onStarted: {
+      if (!root.curWrite || root.curWrite.step !== "dd") return
+      write(root.curWrite.str)
+      stdinEnabled = false   // EOF for dd; the channel reopens on the next run
     }
-    root.claimPathIdx = idx
-    root.claimsReady = true
-    if (root.currentLeagueId && !root.badPaths[root.cachePathFor(root.currentLeagueId)]) cacheStore.path = root.cachePathFor(root.currentLeagueId)
+    onExited: function(exitCode) {
+      var job = root.curWrite
+      if (!job) return
+      if (job.step === "dd") {
+        if (exitCode === 0) {
+          job.step = "mv"
+          publishProc.running = false
+          publishProc.command = ["/usr/bin/mv", "-f", job.tmp, job.path]
+          publishProc.running = true
+        } else {                 // stage failed (excl/nofollow/fsync): target untouched
+          job.step = "rm"
+          running = false
+          command = ["/usr/bin/rm", "-f", job.tmp]
+          running = true
+        }
+      } else root.finishWrite(false)   // rm finished
+    }
+  }
+  Process {
+    id: publishProc
+    command: []
+    onExited: function(exitCode) {
+      var job = root.curWrite
+      if (job && exitCode !== 0) {   // publish failed: target untouched, clean the stage
+        job.step = "rm"
+        writeProc.running = false
+        writeProc.command = ["/usr/bin/rm", "-f", job.tmp]
+        writeProc.running = true
+        return
+      }
+      root.finishWrite(exitCode === 0)
+    }
   }
   // Cross-instance notification dedup. Every bar hosts its own Panel (one per
   // screen), each polling ESPN independently, so a score transition fires once
-  // per instance. All instances share one quickshell process/event loop, so
-  // this sync claim is race-free: the first instance to observe a transition
-  // claims it and the others skip. The TTL only needs to cover poll stagger.
-  // The claim file is user-replaceable, so the load is bounded: Model.sanitizeClaims
-  // discards oversized/depth-bombed/flooded content, a FIFO or directory can't
-  // block the read (FileView stats first and fails NotAFile on non-regular files),
-  // and the startup path probe keeps claims off any planted symlink.
-  function claimNotification(key) {
+  // per instance. All instances share one quickshell process/event loop, so the
+  // decision on the merged map is race-free within the process; the file is
+  // re-read (bounded, no-follow) before every claim so other instances' claims
+  // are honored. The read → decide → publish sequence is no longer event-loop
+  // atomic (dd reads are async), so two instances landing their whole claim
+  // sequence inside the same few-ms window could still double-send; the 45s
+  // TTL covers ordinary poll stagger.
+  // The claim file is user-replaceable, so the load is bounded:
+  // Model.sanitizeClaims discards oversized/depth-bombed/flooded content,
+  // boundedRead caps the decode at MAX_CLAIM_TEXT on a no-follow open, and
+  // planted symlinks/FIFOs fail the read instead of being followed.
+  property var claimQueue: []
+  property bool claimBusy: false
+  property var curClaim: null
+  function requestNotification(key, cmd, kickoffId) {
+    root.claimQueue.push({ key: key, cmd: cmd, kickoffId: kickoffId || "" })
+    root.pumpClaims()
+  }
+  function pumpClaims() {
+    if (root.claimBusy || !root.claimQueue.length) return
+    root.claimBusy = true
+    root.curClaim = root.claimQueue.shift()
+    root.boundedRead(root.claimPath, Model.MAX_CLAIM_TEXT, root.claimReadDone)
+  }
+  function claimReadDone(raw) {
+    var job = root.curClaim
     var now = new Date().getTime()
-    var claims
-    if (root.claimPathIdx < 0) claims = root.memClaims
-    else if (!root.claimsReady) return true // probe still in flight (first ms): send, next claim persists
-    else claims = Model.sanitizeClaims(notifStore.text(), now)
-    if (claims[key] && now - claims[key] < 45000) return false
-    claims[key] = now
-    if (root.claimPathIdx >= 0) { try { notifStore.setText(JSON.stringify(claims)) } catch (e) {} }
-    return true
+    var claims = root.memClaims
+    for (var k in claims) if (now - claims[k] >= 86400000) delete claims[k]   // dead claims
+    var fileClaims = Model.sanitizeClaims(raw, now)
+    for (var k2 in fileClaims) claims[k2] = fileClaims[k2]
+    if (claims[job.key] && now - claims[job.key] < 45000) { root.finishClaim(false); return }
+    claims[job.key] = now
+    root.safePublish(root.claimPath, JSON.stringify(claims), null, true)
+    root.finishClaim(true)
+  }
+  function finishClaim(ok) {
+    var job = root.curClaim
+    root.curClaim = null
+    root.claimBusy = false
+    if (ok) {
+      if (job.kickoffId) root.kickoffNotified[job.kickoffId] = true
+      if (!notifProc.running) { notifProc.command = job.cmd; notifProc.running = true }
+    }
+    root.pumpClaims()
   }
   function checkScoreNotifications(games) {
     var next = {}
@@ -375,26 +477,23 @@ Panel {
       if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
       var koMin = Model.kickoffMinutes(g.date, g.state, new Date())
       if (koMin > 0 && !root.kickoffNotified[g.id] && !notifProc.running) {
-        if (!root.claimNotification("ko|" + root.currentLeagueId + "|" + g.id + "|" + koMin)) continue
-        root.kickoffNotified[g.id] = true
-        notifProc.command = ["notify-send", "-a", "OmaScore",
-          g.away.abbr + " @ " + g.home.abbr + " kicks off in " + koMin + " min",
-          root.leagueLabel(root.currentLeagueId) + " \u00b7 " + root.gameStatus(g)]
-        notifProc.running = true
+        root.requestNotification("ko|" + root.currentLeagueId + "|" + g.id + "|" + koMin,
+          ["notify-send", "-a", "OmaScore",
+            g.away.abbr + " @ " + g.home.abbr + " kicks off in " + koMin + " min",
+            root.leagueLabel(root.currentLeagueId) + " \u00b7 " + root.gameStatus(g)], g.id)
       }
       if (old === undefined || old === cur) continue
       var ev = Model.scoreEvent(old, g)
       if (!ev) continue
       if (notifProc.running) continue
-      if (!root.claimNotification(root.currentLeagueId + "|" + g.id + "|" + ev + "|" + (g.away.score || "") + "|" + (g.home.score || ""))) continue
-      notifProc.command = ev === "final"
+      root.requestNotification(root.currentLeagueId + "|" + g.id + "|" + ev + "|" + (g.away.score || "") + "|" + (g.home.score || ""),
+        ev === "final"
         ? ["notify-send", "-a", "OmaScore",
             "Final \u2014 " + g.away.abbr + " " + (g.away.score || "0") + " \u00b7 " + g.home.abbr + " " + (g.home.score || "0"),
             root.leagueLabel(root.currentLeagueId) + " \u00b7 " + (g.detail || "")]
         : ["notify-send", "-a", "OmaScore",
             g.away.abbr + " " + (g.away.score || "0") + " \u2014 " + g.home.abbr + " " + (g.home.score || "0"),
-            root.leagueLabel(root.currentLeagueId) + " \u00b7 " + g.detail]
-      notifProc.running = true
+            root.leagueLabel(root.currentLeagueId) + " \u00b7 " + g.detail])
     }
     root.prevScores = next
   }
@@ -502,20 +601,6 @@ Panel {
       } catch(e) {}
     }
   }
-  FileView {
-    id: cacheStore
-    // off (empty) until the startup probe clears the league's cache path
-    path: ""
-    watchChanges: false
-    printErrors: false
-    // atomic rename: same user-replaceable-path reasoning as notifStore above
-    atomicWrites: true
-    onLoaded: {
-      var t = root.gated(text())
-      if (t !== null && root.games.length === 0) root.parseGames(t, true)
-    }
-  }
-
   Process {
     id: fetchProc
     command: []
@@ -526,7 +611,7 @@ Panel {
         if (t === null) return
         root.parseGames(t)
         // persist as the league cache (replaces the old `tee` in the shell pipeline)
-        if (t.trim() && cacheStore.path !== "") { try { cacheStore.setText(t) } catch (e) {} }
+        if (t.trim()) root.safePublish(root.cachePathFor(root.currentLeagueId), t, null, false)
       }
     }
   }
@@ -608,14 +693,7 @@ Panel {
     if (saved !== root.currentLeagueId && Model.leagueFor(saved).id === saved) root.setLeague(saved)
   }
   function initForCurrent() { root.restoreLastLeague(); root.initWeek() }
-  Component.onCompleted: {
-    pathProbe.exited.connect(root.probeDone)
-    var paths = root.claimPaths.slice()
-    for (var j = 0; j < Model.leagues.length; j++) paths.push(root.cachePathFor(Model.leagues[j].id))
-    pathProbe.command = ["/usr/bin/stat", "-c", "%f %n", "--"].concat(paths)
-    pathProbe.running = true
-    Qt.callLater(root.initForCurrent)
-  }
+  Component.onCompleted: Qt.callLater(root.initForCurrent)
 
   onOpenedChanged: if (root.opened) {
     root.restoreLastLeague()
