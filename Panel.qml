@@ -82,6 +82,21 @@ Panel {
   readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
   readonly property string oldStorePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
   readonly property string backupPath: Quickshell.env("HOME") + "/.config/omarchy/omascore-favorites.json"
+  // State-dir files are user-replaceable (omarchy-plugin-marketplace#2934 re-review):
+  // before anything writes there, one startup stat pass (fixed argv, no shell)
+  // blacklists every candidate path that is not a regular file or missing, so a
+  // planted symlink/FIFO/directory is never read- or written-through.
+  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy"
+  readonly property var claimPaths: [
+    root.stateDir + "/omascore-notifications.json",
+    root.stateDir + "/omascore-notifications-1.json",
+    root.stateDir + "/omascore-notifications-2.json"
+  ]
+  property int claimPathIdx: 0          // index into claimPaths; -1 = all hostile: memory-only dedup
+  property bool claimsReady: false      // probe finished
+  property var memClaims: ({})          // quarantine fallback for claimPathIdx === -1
+  property var badPaths: ({})           // probed non-regular paths
+  function cachePathFor(leagueId) { return root.stateDir + "/omascore-" + leagueId + "-cache.json" }
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
 
@@ -174,6 +189,7 @@ Panel {
   function setLeague(id) {
     if (id == root.currentLeagueId) return
     root.currentLeagueId = id
+    cacheStore.path = (root.claimsReady && !root.badPaths[root.cachePathFor(id)]) ? root.cachePathFor(id) : ""
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.games = []; root.lastError = ""
     root.prevScores = ({})
@@ -284,27 +300,60 @@ Panel {
   }
   FileView {
     id: notifStore
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-notifications.json"
+    path: root.claimPathIdx >= 0 ? root.claimPaths[root.claimPathIdx] : ""
     watchChanges: false
     printErrors: false
     blockLoading: true
     blockWrites: true
+    // atomic (temp + rename): concurrent per-panel claim writes can't tear, and a
+    // planted FIFO is replaced by the rename instead of being opened. Symlinks are
+    // handled by the startup probe (QSaveFile resolves them, so atomic alone is
+    // not a no-follow boundary — only never-touching a blacklisted path is).
+    atomicWrites: true
+  }
+  // Startup probe of every state path the panel writes: mark non-regular entries
+  // (symlink/FIFO/directory) hostile. Missing files are healthy (the writer creates
+  // them). One fixed-argv stat process for all candidates, all leagues included.
+  Process {
+    id: pathProbe
+    command: []
+    stdout: SplitParser {
+      onRead: line => {
+        var sp = line.indexOf(" ")
+        if (sp <= 0) return
+        var mode = parseInt(line.substring(0, sp), 16)
+        if (isNaN(mode) || (mode & 0xF000) === 0x8000) return
+        root.badPaths[line.substring(sp + 1)] = true
+      }
+    }
+  }
+  function probeDone() {
+    var idx = -1
+    for (var i = 0; i < root.claimPaths.length; i++) {
+      if (!root.badPaths[root.claimPaths[i]]) { idx = i; break }
+    }
+    root.claimPathIdx = idx
+    root.claimsReady = true
+    if (root.currentLeagueId && !root.badPaths[root.cachePathFor(root.currentLeagueId)]) cacheStore.path = root.cachePathFor(root.currentLeagueId)
   }
   // Cross-instance notification dedup. Every bar hosts its own Panel (one per
   // screen), each polling ESPN independently, so a score transition fires once
   // per instance. All instances share one quickshell process/event loop, so
   // this sync claim is race-free: the first instance to observe a transition
   // claims it and the others skip. The TTL only needs to cover poll stagger.
+  // The claim file is user-replaceable, so the load is bounded: Model.sanitizeClaims
+  // discards oversized/depth-bombed/flooded content, a FIFO or directory can't
+  // block the read (FileView stats first and fails NotAFile on non-regular files),
+  // and the startup path probe keeps claims off any planted symlink.
   function claimNotification(key) {
     var now = new Date().getTime()
-    var claims = {}
-    try { claims = JSON.parse(notifStore.text() || "{}") || {} } catch (e) {}
-    if (typeof claims !== "object" || claims === null) claims = {}
+    var claims
+    if (root.claimPathIdx < 0) claims = root.memClaims
+    else if (!root.claimsReady) return true // probe still in flight (first ms): send, next claim persists
+    else claims = Model.sanitizeClaims(notifStore.text(), now)
     if (claims[key] && now - claims[key] < 45000) return false
-    var pruned = {}
-    for (var k in claims) if (now - claims[k] < 86400000) pruned[k] = claims[k]
-    pruned[key] = now
-    try { notifStore.setText(JSON.stringify(pruned)) } catch (e) {}
+    claims[key] = now
+    if (root.claimPathIdx >= 0) { try { notifStore.setText(JSON.stringify(claims)) } catch (e) {} }
     return true
   }
   function checkScoreNotifications(games) {
@@ -455,9 +504,12 @@ Panel {
   }
   FileView {
     id: cacheStore
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-" + root.currentLeagueId + "-cache.json"
+    // off (empty) until the startup probe clears the league's cache path
+    path: ""
     watchChanges: false
     printErrors: false
+    // atomic rename: same user-replaceable-path reasoning as notifStore above
+    atomicWrites: true
     onLoaded: {
       var t = root.gated(text())
       if (t !== null && root.games.length === 0) root.parseGames(t, true)
@@ -474,7 +526,7 @@ Panel {
         if (t === null) return
         root.parseGames(t)
         // persist as the league cache (replaces the old `tee` in the shell pipeline)
-        if (t.trim()) { try { cacheStore.setText(t) } catch (e) {} }
+        if (t.trim() && cacheStore.path !== "") { try { cacheStore.setText(t) } catch (e) {} }
       }
     }
   }
@@ -556,7 +608,14 @@ Panel {
     if (saved !== root.currentLeagueId && Model.leagueFor(saved).id === saved) root.setLeague(saved)
   }
   function initForCurrent() { root.restoreLastLeague(); root.initWeek() }
-  Component.onCompleted: Qt.callLater(root.initForCurrent)
+  Component.onCompleted: {
+    pathProbe.exited.connect(root.probeDone)
+    var paths = root.claimPaths.slice()
+    for (var j = 0; j < Model.leagues.length; j++) paths.push(root.cachePathFor(Model.leagues[j].id))
+    pathProbe.command = ["/usr/bin/stat", "-c", "%f %n", "--"].concat(paths)
+    pathProbe.running = true
+    Qt.callLater(root.initForCurrent)
+  }
 
   onOpenedChanged: if (root.opened) {
     root.restoreLastLeague()

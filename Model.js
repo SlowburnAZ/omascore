@@ -215,6 +215,8 @@ var MAX_INJURIES = 24
 var MAX_STR = 300              // default string cap in sanitize()
 var SANITIZE_DEPTH = 12        // max nesting depth retained
 var SANITIZE_NODES = 10000     // max total nodes retained
+var MAX_CLAIM_TEXT = 65536     // notification claim file pre-parse byte gate (chars)
+var MAX_CLAIMS = 128           // notification claim map entry cap
 
 // Truncate to n chars and defuse tag-leading strings so QML's Text.AutoText
 // never renders remote data as rich text (see security baseline above).
@@ -259,6 +261,28 @@ function parseBoundedJson(txt) {
 }
 
 function validEventId(id) { return /^\d{1,12}$/.test(String(id == null ? "" : id)) }
+
+// Bounded load of the cross-panel notification claim file. The file lives in a
+// user-writable state dir and could be replaced (oversized/depth-bombed JSON,
+// entry flood, squatted keys with future timestamps). Everything failing the
+// shape check is discarded so only our own claim shape survives into the map.
+function sanitizeClaims(raw, now) {
+    var claims = {}
+    if (!raw || raw.length > MAX_CLAIM_TEXT) return claims
+    var parsed = parseBoundedJson(raw)
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return claims
+    for (var k in parsed) {
+        if (!parsed.hasOwnProperty(k)) continue
+        // our keys are "ko|league|gameId|koMin" or "league|gameId|event|score|score"
+        if (!/^[a-z0-9|-]{1,120}$/.test(k)) continue
+        var v = parsed[k]
+        if (typeof v !== "number" || !isFinite(v) || v <= 0 || v > now) continue
+        if (now - v >= 86400000) continue // older than 24h: dead claim
+        claims[k] = v
+    }
+    if (Object.keys(claims).length > MAX_CLAIMS) return {} // flood: keep nothing
+    return claims
+}
 
 function summaryUrl(eventId, leagueId) {
     if (!validEventId(eventId)) return ""
