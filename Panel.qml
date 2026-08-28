@@ -25,6 +25,9 @@ Panel {
   property var scoreFlash: ({})
   property int flashTick: 0
   property int cursorIndex: -1
+  property string confFetchLeague: ""
+  property var confGroups: null
+  property string confGroupsLeague: ""
   readonly property var favLiveGames: {
     var out = []
     for (var i = 0; i < root.games.length; i++) {
@@ -173,6 +176,8 @@ Panel {
     root.kickoffNotified = ({})
     root.scoreFlash = ({})
     root.cursorIndex = -1
+    root.confGroups = null
+    root.confGroupsLeague = ""
     root.initWeek()
     root.setSetting("lastLeague", id)
   }
@@ -217,6 +222,13 @@ Panel {
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0
     detailProc.running = false; detailProc.command = ["bash","-c","curl -fsS --max-time 10 '" + Model.summaryUrl(game.id, root.currentLeagueId) + "' 2>/dev/null"]; detailProc.running = true
+    if (Model.leagueFor(root.currentLeagueId).sport === "soccer") {
+      root.confFetchLeague = root.currentLeagueId
+      var L = Model.leagueFor(root.currentLeagueId)
+      standingsProc.running = false
+      standingsProc.command = ["curl", "-fsS", "--max-time", "10", Model.standingsUrlFor(L.sport, L.league)]
+      standingsProc.running = true
+    }
   }
   function closeDetail() {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
@@ -230,7 +242,7 @@ Panel {
     try {
       var r = Model.parseDetail(raw, root.selectedGame, root.currentLeagueId)
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
-      root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = r.detailStandings || null; root.detailInjuries = r.detailInjuries || []
+      root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = (root.confGroupsLeague === root.currentLeagueId && root.confGroups) ? { groups: root.confGroups } : (r.detailStandings || null); root.detailInjuries = r.detailInjuries || []
       root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
       root.detailLoading = false
     } catch (e) {
@@ -305,6 +317,16 @@ Panel {
     if (!g) return ""
     var base = (g.state === "pre" && g.date) ? Qt.formatDateTime(new Date(g.date), "M/d - h:mm AP") : (g.detail || "")
     return base + (root.showOdds && g.state === "pre" && g.odds ? "  \u00b7  " + g.odds : "")
+  }
+  function periodChip(n) {
+    var lbl = Model.periodLabelFor(root.currentLeagueId)
+    return (lbl === "Q" && n > 4) ? (n === 5 ? "OT" : "OT" + (n - 4)) : lbl + n
+  }
+  function playChipText(p) {
+    if (!p) return ""
+    var t = (p.period && p.period.number) ? root.periodChip(p.period.number) : ((p.period && p.period.displayValue) ? p.period.displayValue : "")
+    if (p.clock && p.clock.displayValue) t += " " + p.clock.displayValue
+    return t
   }
   function standingsStat(entry, names) {
     var s = (entry && entry.stats) ? entry.stats : []
@@ -421,6 +443,26 @@ Panel {
 
   Process {
     id: notifProc
+  }
+
+  Process {
+    id: standingsProc
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          if (root.selectedGame && root.confFetchLeague === root.currentLeagueId) {
+            var r = Model.parseStandingsGroups(text)
+            if (r.groups.length) {
+              root.confGroups = r.groups
+              root.confGroupsLeague = root.currentLeagueId
+              root.detailStandings = r
+            }
+          }
+        } catch (e) {}
+      }
+    }
   }
 
   Timer {
@@ -1584,15 +1626,16 @@ Repeater {
                             anchors.bottomMargin: Style.space(4)
                             spacing: Style.space(8)
                             Rectangle {
-                              Layout.preferredWidth: Style.space(44)
+                              Layout.preferredWidth: Math.max(Style.space(40), chipText.implicitWidth + Style.space(8))
                               Layout.alignment: Qt.AlignTop
                               height: Style.space(16)
                               radius: 3
                               color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
-                              visible: (modelData.clock && modelData.clock.displayValue) || (modelData.period && modelData.period.displayValue)
+                              visible: root.playChipText(modelData) !== ""
                               Text {
+                                id: chipText
                                 anchors.centerIn: parent
-                                text: (modelData.period && modelData.period.displayValue ? modelData.period.displayValue + " " : (modelData.period && modelData.period.number ? "Q" + modelData.period.number + " " : "")) + (modelData.clock && modelData.clock.displayValue ? modelData.clock.displayValue : "")
+                                text: root.playChipText(modelData)
                                 color: root.barForeground
                                 opacity: 0.7
                                 font.pixelSize: Style.font.caption
@@ -1639,15 +1682,16 @@ Repeater {
                         anchors.bottomMargin: Style.space(4)
                         spacing: Style.space(8)
                         Rectangle {
-                          Layout.preferredWidth: Style.space(44)
+                          Layout.preferredWidth: Math.max(Style.space(40), chipText.implicitWidth + Style.space(8))
                           Layout.alignment: Qt.AlignTop
                           height: Style.space(16)
                           radius: 3
                           color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
-                          visible: (modelData.clock && modelData.clock.displayValue) || (modelData.period && modelData.period.displayValue)
+                          visible: root.playChipText(modelData) !== ""
                           Text {
+                            id: chipText
                             anchors.centerIn: parent
-                            text: (modelData.period && modelData.period.displayValue ? modelData.period.displayValue + " " : (modelData.period && modelData.period.number ? "Q" + modelData.period.number + " " : "")) + (modelData.clock && modelData.clock.displayValue ? modelData.clock.displayValue : "")
+                            text: root.playChipText(modelData)
                             color: root.barForeground
                             opacity: 0.7
                             font.pixelSize: Style.font.caption
@@ -1790,14 +1834,25 @@ Repeater {
                           anchors.leftMargin: Style.space(6)
                           anchors.rightMargin: Style.space(6)
                           spacing: Style.space(8)
-                          Text { Layout.fillWidth: true; text: modelData.conferenceHeader || modelData.divisionHeader || modelData.header || ""; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true; elide: Text.ElideRight }
+                          Text { Layout.fillWidth: true; text: (modelData.divisionHeader || modelData.header || modelData.conferenceHeader || "").replace(/^\d{4}(-\d{2,4})? /, ""); color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true; elide: Text.ElideRight }
                           Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "W"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
                           Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "L"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
                           Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "T"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
                         }
                       }
                       Repeater {
-                        model: modelData.standings ? modelData.standings.entries.slice(0, 5) : []
+                        model: {
+                          var es = modelData.standings ? modelData.standings.entries : []
+                          var rows = []
+                          for (var i = 0; i < es.length; i++) { es[i]._rank = i + 1; if (i < 5) rows.push(es[i]) }
+                          if (root.selectedGame) {
+                            var ids = [String(root.selectedGame.away.id), String(root.selectedGame.home.id)]
+                            for (var j = 5; j < es.length; j++) {
+                              if (ids.indexOf(String(es[j].id)) >= 0) rows.push(es[j])
+                            }
+                          }
+                          return rows
+                        }
                         delegate: Rectangle {
                           required property var modelData
                           required property int index
@@ -1813,6 +1868,7 @@ Repeater {
                             anchors.leftMargin: Style.space(6)
                             anchors.rightMargin: Style.space(6)
                             spacing: Style.space(8)
+                            Text { Layout.preferredWidth: Style.space(16); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["rank"]) !== "" ? root.standingsStat(modelData, ["rank"]) : String(modelData._rank); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.5; font.pixelSize: Style.font.caption; font.family: "Monospace" }
                             Text { Layout.fillWidth: true; text: modelData.team || modelData.displayName || ""; color: isCurrent ? Color.accent : root.barForeground; font.pixelSize: Style.font.caption; elide: Text.ElideRight; font.bold: isCurrent }
                             Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["wins","W"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
                             Text { Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["losses","L"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }

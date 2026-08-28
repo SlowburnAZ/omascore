@@ -206,6 +206,27 @@ function fetchCurl(dateStr, leagueId) {
     var cache = "~/.local/state/omarchy/omascore-" + (leagueId || "default") + "-cache.json"
     return "mkdir -p ~/.local/state/omarchy; curl -fsS --max-time 10 '" + url + "?dates='\"" + dateStr + "\" 2>/dev/null | tee " + cache
 }
+function standingsUrlFor(sport, league) { return "https://site.api.espn.com/apis/v2/sports/" + sport + "/" + league + "/standings" }
+
+// Convert the v2 league-standings payload (children = conferences) into the same
+// group shape the summary standings use, so panels render both identically.
+function parseStandingsGroups(raw) {
+    var d = JSON.parse(String(raw || "{}"))
+    var children = d.children || []
+    var groups = []
+    for (var i = 0; i < children.length; i++) {
+        var ch = children[i]
+        var es = (ch.standings && ch.standings.entries) ? ch.standings.entries : []
+        var entries = []
+        for (var j = 0; j < es.length; j++) {
+            var e = es[j]
+            if (!e || !e.team) continue
+            entries.push({ id: String(e.team.id || ""), team: e.team.displayName || e.team.name || "", stats: e.stats || [] })
+        }
+        if (entries.length) groups.push({ header: ch.name || ch.displayName || "", standings: { entries: entries } })
+    }
+    return { groups: groups }
+}
 function weekCurl(dateStrs, leagueId) {
     var url = leagueId ? apiUrlFor(leagueFor(leagueId).sport, leagueFor(leagueId).league) : apiUrl
     return "for d in " + dateStrs.join(" ") + "; do c=$(curl -fsS --max-time 5 '" + url + "?dates='\"$d\" 2>/dev/null | jq -r '.events | length' 2>/dev/null); [ -z \"$c\" ] && c=0; echo \"$d:$c\"; done"
@@ -229,14 +250,17 @@ function parseGames(raw) {
         var ev = events[i]
         var comp = ev.competitions && ev.competitions[0]
         if (!comp) continue
-        var g = { id: ev.id, state: ev.status.type.state, detail: ev.status.type.shortDetail, date: ev.date || "", away: null, home: null }
+        var st = (ev.status && ev.status.type) ? ev.status.type : null
+        var g = { id: ev.id, state: st ? st.state : "", detail: st ? st.shortDetail : "", date: ev.date || "", away: null, home: null }
         var cs = comp.competitors || []
         for (var j = 0; j < cs.length; j++) {
             var c = cs[j]
+            if (!c || !c.team) continue
             g[c.homeAway] = { id: c.team.id, abbr: c.team.abbreviation, name: c.team.displayName, score: c.score, logo: c.team.logo, color: c.team.color, record: c.records && c.records[0] ? c.records[0].summary : "" }
         }
         var oddsArr = comp.odds || []
-        if (oddsArr.length && oddsArr[0].details) g.odds = oddsArr[0].details + " \u00b7 O/U " + oddsArr[0].overUnder
+        var o = oddsArr[0]
+        if (o && o.details) g.odds = o.details + " \u00b7 O/U " + o.overUnder
         if (g.away && g.home) out.push(g)
     }
     return { games: out, error: out.length ? "" : "No games scheduled" }
