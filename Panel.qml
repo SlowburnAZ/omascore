@@ -24,6 +24,8 @@ Panel {
   property var kickoffNotified: ({})
   property var scoreFlash: ({})
   property int flashTick: 0
+  readonly property bool detailFlashing: root.flashTick >= 0 && root.selectedGame !== null && (root.scoreFlash[root.selectedGame.id] || 0) > 0 && new Date().getTime() - root.scoreFlash[root.selectedGame.id] < 700
+  onDetailFlashingChanged: if (root.detailFlashing) detailFlashExpire.restart()
   property int cursorIndex: -1
   property string confFetchLeague: ""
   property var confGroups: null
@@ -287,6 +289,18 @@ Panel {
       var r = Model.parseGames(txt)
       root.games = root.sorted(r.games)
       root.lastError = r.error
+      // keep the open detail's score/status current; the header reads selectedGame
+      if (root.selectedGame !== null) {
+        for (var i = 0; i < r.games.length; i++) {
+          if (r.games[i].id === root.selectedGame.id) {
+            root.selectedGame.away.score = r.games[i].away.score
+            root.selectedGame.home.score = r.games[i].home.score
+            root.selectedGame.state = r.games[i].state
+            root.selectedGame.detail = r.games[i].detail
+            break
+          }
+        }
+      }
       root.recount()
       if (!silent) root.checkScoreNotifications(r.games)
     } catch (e) { root.lastError = "Parse error" }
@@ -343,7 +357,12 @@ Panel {
     var claims
     if (root.claimPathIdx < 0) claims = root.memClaims
     else if (!root.claimsReady) return true // probe still in flight (first ms): send, next claim persists
-    else claims = Model.sanitizeClaims(notifStore.text(), now)
+    else {
+      // sibling panels write claims between our polls; FileView caches, so re-read
+      // from disk or every per-screen instance believes it is first
+      notifStore.reload()
+      claims = Model.sanitizeClaims(notifStore.text(), now)
+    }
     if (claims[key] && now - claims[key] < 45000) return false
     claims[key] = now
     if (root.claimPathIdx >= 0) { try { notifStore.setText(JSON.stringify(claims)) } catch (e) {} }
@@ -605,6 +624,12 @@ Panel {
     repeat: true
     running: true
     onTriggered: root.refresh()
+  }
+
+  Timer {
+    id: detailFlashExpire
+    interval: 700
+    onTriggered: root.flashTick++
   }
   onPollIntervalChanged: pollTimer.restart()
 
@@ -1194,19 +1219,36 @@ Panel {
                 fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
                 onClicked: root.closeDetail()
               }
-              Text {
+              Row {
                 Layout.fillWidth: true
-                text: root.selectedGame ? root.selectedGame.away.abbr + " @ " + root.selectedGame.home.abbr : ""
-                color: root.barForeground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.subtitle
-                font.bold: true
-                elide: Text.ElideRight
+                spacing: Style.space(6)
+                Text {
+                  text: root.selectedGame ? root.selectedGame.away.abbr : ""
+                  color: root.selectedGame && (root.selectedGame.away.color || "") !== "" ? root.teamColor(root.selectedGame.away.color) : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
+                Text {
+                  text: "@"
+                  color: root.barForeground
+                  opacity: 0.5
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
+                Text {
+                  text: root.selectedGame ? root.selectedGame.home.abbr : ""
+                  color: root.selectedGame && (root.selectedGame.home.color || "") !== "" ? root.teamColor(root.selectedGame.home.color) : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
               }
               Text {
                 text: root.selectedGame ? root.selectedGame.detail : ""
-                color: root.barForeground
-                opacity: 0.6
+                color: root.statusColor(root.selectedGame ? root.selectedGame.state : "")
+                opacity: root.selectedGame && root.selectedGame.state === "in" ? 1 : 0.6
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
               }
@@ -1250,7 +1292,7 @@ Panel {
                   spacing: Style.space(6)
                   Text {
                     text: root.selectedGame && root.selectedGame.away ? root.selectedGame.away.score : ""
-                    color: root.leads(root.selectedGame, "away") ? Color.accent : root.barForeground
+                    color: root.detailFlashing || root.leads(root.selectedGame, "away") ? Color.accent : root.barForeground
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
@@ -1320,7 +1362,7 @@ Panel {
                   spacing: Style.space(6)
                   Text {
                     text: root.selectedGame && root.selectedGame.home ? root.selectedGame.home.score : ""
-                    color: root.leads(root.selectedGame, "home") ? Color.accent : root.barForeground
+                    color: root.detailFlashing || root.leads(root.selectedGame, "home") ? Color.accent : root.barForeground
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
