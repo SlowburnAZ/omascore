@@ -100,6 +100,10 @@ Panel {
   property int selectedDay: 0
   property var dayLabels: Model.dayLabels
   property var monthLabels: Model.monthLabels
+  // week scan queue: one argv curl per day, drained sequentially by weekProc
+  property var weekQueue: []
+  property string weekFetchDay: ""
+  property string weekFetchLeague: ""
 
   property var selectedGame: null
   property var detailStats: null
@@ -200,33 +204,39 @@ Panel {
   function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.cursorIndex = -1; root.refreshSelected() }
   function checkWeekGames() {
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
-    var cmd = Model.weekCurl(root.weekDateStrs, root.currentLeagueId)
-    weekProc.running = false; weekProc.command = ["bash","-c",cmd]; weekProc.running = true
+    root.weekQueue = root.weekDateStrs.slice()
+    root.weekFetchLeague = root.currentLeagueId
+    root.fetchNextWeekDay()
   }
-  function parseWeek(raw) {
-    if (!String(raw||"").trim()) return
-    var r = Model.parseWeek(raw, root.weekDateStrs)
-    root.hasGames = r.hasGames
-    var nxt = Model.nextSelectedDay(r.hasGames, root.selectedDay)
-    if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
+  function fetchNextWeekDay() {
+    var d = root.weekQueue.length ? root.weekQueue.shift() : ""
+    if (!d) return
+    var args = Model.weekArgs(d, root.currentLeagueId)
+    if (!args) { root.fetchNextWeekDay(); return }
+    root.weekFetchDay = d
+    weekProc.running = false; weekProc.command = args; weekProc.running = true
   }
   function refreshSelected() {
     var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
     cacheStore.reload()
-    fetchProc.running = false; fetchProc.command = ["bash","-c", Model.fetchCurl(ds, root.currentLeagueId)]; fetchProc.running = true
+    var args = Model.fetchArgs(ds, root.currentLeagueId)
+    if (!args) return
+    fetchProc.running = false; fetchProc.command = args; fetchProc.running = true
   }
   function showDetail(game) {
-    if (!game || !game.id) return
+    if (!game || !Model.validEventId(game.id)) return
+    var url = Model.summaryUrl(game.id, root.currentLeagueId)
+    if (!url) return
     root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0
-    detailProc.running = false; detailProc.command = ["bash","-c","curl -fsS --max-time 10 '" + Model.summaryUrl(game.id, root.currentLeagueId) + "' 2>/dev/null"]; detailProc.running = true
+    detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
     if (Model.leagueFor(root.currentLeagueId).sport === "soccer") {
       root.confFetchLeague = root.currentLeagueId
       var L = Model.leagueFor(root.currentLeagueId)
       standingsProc.running = false
-      standingsProc.command = ["curl", "-fsS", "--max-time", "10", Model.standingsUrlFor(L.sport, L.league)]
+      standingsProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, Model.standingsUrlFor(L.sport, L.league)]
       standingsProc.running = true
     }
   }
@@ -251,6 +261,14 @@ Panel {
     }
   }
   function refresh() { root.refreshSelected() }
+  // Collector-side cap (security baseline #2934): curl's --max-filesize enforces the
+  // producer cap; this gates every parse path so oversized output never reaches
+  // JSON.parse even if the producer cap were bypassed. Returns null when over cap.
+  function gated(raw) {
+    var s = String(raw || "")
+    if (s.length > Model.MAX_TEXT) return null
+    return s
+  }
   function parseGames(raw, silent) {
     var txt = String(raw||"").trim()
     if (!txt) { root.games = []; root.lastError = ""; root.recount(); return }
@@ -413,15 +431,24 @@ Panel {
     path: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-" + root.currentLeagueId + "-cache.json"
     watchChanges: false
     printErrors: false
-    onLoaded: if (root.games.length === 0) root.parseGames(text(), true)
+    onLoaded: {
+      var t = root.gated(text())
+      if (t !== null && root.games.length === 0) root.parseGames(t, true)
+    }
   }
 
   Process {
     id: fetchProc
-    command: ["curl", "-fsS", "--max-time", "10", root.apiUrl]
+    command: []
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.parseGames(text)
+      onStreamFinished: {
+        var t = root.gated(text)
+        if (t === null) return
+        root.parseGames(t)
+        // persist as the league cache (replaces the old `tee` in the shell pipeline)
+        if (t.trim()) { try { cacheStore.setText(t) } catch (e) {} }
+      }
     }
   }
 
@@ -429,7 +456,19 @@ Panel {
     id: weekProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.parseWeek(text)
+      onStreamFinished: {
+        // abandon a scan for a league we've already left
+        if (root.weekFetchLeague !== root.currentLeagueId) { root.weekQueue = []; return }
+        var t = root.gated(text)
+        var n = (t === null) ? 0 : Model.parseWeekDay(t)
+        var idx = root.weekDateStrs.indexOf(root.weekFetchDay)
+        if (idx >= 0 && n > 0) { var a = root.hasGames.slice(); a[idx] = true; root.hasGames = a }
+        root.fetchNextWeekDay()
+        if (root.weekQueue.length === 0) {
+          var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
+          if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
+        }
+      }
     }
   }
 
@@ -437,7 +476,11 @@ Panel {
     id: detailProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.parseDetail(text)
+      onStreamFinished: {
+        var t = root.gated(text)
+        if (t === null) { root.detailError = "Response too large"; root.detailLoading = false; return }
+        root.parseDetail(t)
+      }
     }
   }
 
@@ -451,9 +494,11 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        var t = root.gated(text)
+        if (t === null) return
         try {
           if (root.selectedGame && root.confFetchLeague === root.currentLeagueId) {
-            var r = Model.parseStandingsGroups(text)
+            var r = Model.parseStandingsGroups(t)
             if (r.groups.length) {
               root.confGroups = r.groups
               root.confGroupsLeague = root.currentLeagueId

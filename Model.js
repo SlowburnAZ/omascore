@@ -197,39 +197,114 @@ function kickoffMinutes(dateStr, state, now) {
 
 function statusColor(state, urgent, defCol) { return state === "in" ? urgent : defCol }
 
+// --- Security budgets (omarchy-plugin-marketplace#2934) ---
+// Remote responses are treated as hostile: every curl runs from a fixed argument
+// array with a producer-side --max-filesize (MAX_BYTES), every collector output
+// passes Panel.gated() before JSON.parse, and everything retained from a parsed
+// payload goes through sanitize()/clip() so per-list sizes, nesting depth,
+// string lengths and total node count are all bounded.
+var MAX_BYTES = "8388608"      // curl --max-filesize: 8 MB hard producer cap
+var MAX_TEXT = 8388608         // pre-parse gate enforced in Panel.gated() (chars)
+var MAX_EVENTS = 128           // games per scoreboard response
+var MAX_LIST = 64              // generic per-list cap in sanitize()
+var MAX_PLAYERS = 120          // athlete rows per team side
+var MAX_STATS = 32             // statistics per team
+var MAX_PLAYS = 120            // plays retained (also caps per-drive play lists)
+var MAX_DRIVES = 24
+var MAX_INJURIES = 24
+var MAX_STR = 300              // default string cap in sanitize()
+var SANITIZE_DEPTH = 12        // max nesting depth retained
+var SANITIZE_NODES = 10000     // max total nodes retained
+
+function clip(s, n) {
+    s = String(s == null ? "" : s)
+    return s.length > n ? s.substring(0, n) : s
+}
+
+// Bounded deep copy of remote JSON: per-list cap, depth cap, string cap and a
+// total-node budget. Non-object leaves pass through unchanged.
+function sanitize(v, listCap, strCap) {
+    listCap = listCap || MAX_LIST
+    strCap = strCap || MAX_STR
+    var budget = SANITIZE_NODES
+    function walk(x, depth) {
+        if (budget-- <= 0 || depth > SANITIZE_DEPTH) return null
+        if (x == null || typeof x !== "object") {
+            if (typeof x === "string") return x.length > strCap ? x.substring(0, strCap) : x
+            return x
+        }
+        if (Array.isArray(x)) {
+            var a = []
+            for (var i = 0; i < x.length && i < listCap; i++) a.push(walk(x[i], depth + 1))
+            return a
+        }
+        var o = {}
+        for (var k in x) {
+            if (!x.hasOwnProperty(k)) continue
+            o[k] = walk(x[k], depth + 1)
+            if (budget <= 0) break
+        }
+        return o
+    }
+    return walk(v, 0)
+}
+
+// JSON.parse with a cheap pre-parse guard against depth bombs (runs of 50+
+// consecutive open brackets in the first 4 KB).
+function parseBoundedJson(txt) {
+    if (/(\{|\[)(\s*(\{|\[)){50,}/.test(txt.substring(0, 4096))) return null
+    try { return JSON.parse(txt) } catch (e) { return null }
+}
+
+function validEventId(id) { return /^\d{1,12}$/.test(String(id == null ? "" : id)) }
+
 function summaryUrl(eventId, leagueId) {
+    if (!validEventId(eventId)) return ""
     if (leagueId) { var L = leagueFor(leagueId); return summaryBaseFor(L.sport, L.league) + "?event=" + eventId }
     return summaryBase + "?event=" + eventId
 }
-function fetchCurl(dateStr, leagueId) {
-    var url = leagueId ? apiUrlFor(leagueFor(leagueId).sport, leagueFor(leagueId).league) : apiUrl
-    var cache = "~/.local/state/omarchy/omascore-" + (leagueId || "default") + "-cache.json"
-    return "mkdir -p ~/.local/state/omarchy; curl -fsS --max-time 10 '" + url + "?dates='\"" + dateStr + "\" 2>/dev/null | tee " + cache
+
+function scoreboardUrl(dateStr, leagueId) {
+    var L = leagueFor(leagueId)
+    return apiUrlFor(L.sport, L.league) + "?dates=" + dateStr
+}
+// Argument-array curl for a one-day scoreboard fetch (no shell involved).
+function fetchArgs(dateStr, leagueId) {
+    if (!/^\d{8}$/.test(String(dateStr || ""))) return null
+    return ["curl", "-fsS", "--max-time", "10", "--max-filesize", MAX_BYTES, scoreboardUrl(dateStr, leagueId)]
+}
+// Argument-array curl for one day of the has-games week scan.
+function weekArgs(dateStr, leagueId) {
+    if (!/^\d{8}$/.test(String(dateStr || ""))) return null
+    return ["curl", "-fsS", "--max-time", "5", "--max-filesize", MAX_BYTES, scoreboardUrl(dateStr, leagueId)]
 }
 function standingsUrlFor(sport, league) { return "https://site.api.espn.com/apis/v2/sports/" + sport + "/" + league + "/standings" }
 
 // Convert the v2 league-standings payload (children = conferences) into the same
 // group shape the summary standings use, so panels render both identically.
 function parseStandingsGroups(raw) {
-    var d = JSON.parse(String(raw || "{}"))
-    var children = d.children || []
+    var d = parseBoundedJson(String(raw || "{}"))
+    if (!d || typeof d !== "object") return { groups: [] }
+    var children = Array.isArray(d.children) ? d.children.slice(0, 8) : []
     var groups = []
     for (var i = 0; i < children.length; i++) {
         var ch = children[i]
-        var es = (ch.standings && ch.standings.entries) ? ch.standings.entries : []
+        var es = (ch && ch.standings && Array.isArray(ch.standings.entries)) ? ch.standings.entries.slice(0, MAX_LIST) : []
         var entries = []
         for (var j = 0; j < es.length; j++) {
             var e = es[j]
             if (!e || !e.team) continue
-            entries.push({ id: String(e.team.id || ""), team: e.team.displayName || e.team.name || "", stats: e.stats || [] })
+            var stats = Array.isArray(e.stats) ? e.stats.slice(0, MAX_STATS) : []
+            var bounded = []
+            for (var s = 0; s < stats.length; s++) {
+                var st = stats[s] || {}
+                bounded.push({ name: clip(st.name, 60), abbreviation: clip(st.abbreviation, 16), displayValue: clip(st.displayValue, 60), value: st.value })
+            }
+            entries.push({ id: clip(e.team.id, 16), team: clip(e.team.displayName || e.team.name, 100), stats: bounded })
         }
-        if (entries.length) groups.push({ header: ch.name || ch.displayName || "", standings: { entries: entries } })
+        if (entries.length) groups.push({ header: clip(ch.name || ch.displayName, 100), standings: { entries: entries } })
     }
     return { groups: groups }
-}
-function weekCurl(dateStrs, leagueId) {
-    var url = leagueId ? apiUrlFor(leagueFor(leagueId).sport, leagueFor(leagueId).league) : apiUrl
-    return "for d in " + dateStrs.join(" ") + "; do c=$(curl -fsS --max-time 5 '" + url + "?dates='\"$d\" 2>/dev/null | jq -r '.events | length' 2>/dev/null); [ -z \"$c\" ] && c=0; echo \"$d:$c\"; done"
 }
 
 function periodLabelFor(leagueId) {
@@ -243,42 +318,41 @@ function periodLabelFor(leagueId) {
 function parseGames(raw) {
     var txt = String(raw || "").trim()
     if (!txt) return { games: [], error: "" }
-    var data = JSON.parse(txt)
-    var events = data.events || []
+    var data = parseBoundedJson(txt)
+    if (!data || typeof data !== "object") return { games: [], error: "Parse error" }
+    var events = Array.isArray(data.events) ? data.events.slice(0, MAX_EVENTS) : []
     var out = []
     for (var i = 0; i < events.length; i++) {
         var ev = events[i]
-        var comp = ev.competitions && ev.competitions[0]
-        if (!comp) continue
+        if (!ev || typeof ev !== "object") continue
+        var comps = Array.isArray(ev.competitions) ? ev.competitions : []
+        var comp = comps[0]
+        if (!comp || typeof comp !== "object") continue
         var st = (ev.status && ev.status.type) ? ev.status.type : null
-        var g = { id: ev.id, state: st ? st.state : "", detail: st ? st.shortDetail : "", date: ev.date || "", away: null, home: null }
-        var cs = comp.competitors || []
-        for (var j = 0; j < cs.length; j++) {
+        var g = { id: clip(ev.id, 16), state: st ? clip(st.state, 16) : "", detail: st ? clip(st.shortDetail, 100) : "", date: clip(ev.date, 40), away: null, home: null }
+        var cs = Array.isArray(comp.competitors) ? comp.competitors : []
+        for (var j = 0; j < cs.length && j < 4; j++) {
             var c = cs[j]
-            if (!c || !c.team) continue
-            g[c.homeAway] = { id: c.team.id, abbr: c.team.abbreviation, name: c.team.displayName, score: c.score, logo: c.team.logo, color: c.team.color, record: c.records && c.records[0] ? c.records[0].summary : "" }
+            if (!c || !c.team || (c.homeAway !== "away" && c.homeAway !== "home")) continue
+            g[c.homeAway] = { id: clip(c.team.id, 16), abbr: clip(c.team.abbreviation, 16), name: clip(c.team.displayName, 100), score: clip(c.score, 16), logo: clip(c.team.logo, 500), color: clip(c.team.color, 16), record: c.records && c.records[0] ? clip(c.records[0].summary, 60) : "" }
         }
-        var oddsArr = comp.odds || []
+        var oddsArr = Array.isArray(comp.odds) ? comp.odds : []
         var o = oddsArr[0]
-        if (o && o.details) g.odds = o.details + " \u00b7 O/U " + o.overUnder
+        if (o && o.details) g.odds = clip(o.details, 60) + " \u00b7 O/U " + clip(o.overUnder, 16)
         if (g.away && g.home) out.push(g)
     }
     return { games: out, error: out.length ? "" : "No games scheduled" }
 }
 
-function parseWeek(raw, weekDateStrs) {
+// Week scan: one curl per day (argument-array, no shell) whose raw response is a
+// single-day scoreboard — only the event count matters for the dot indicators.
+function parseWeekDay(raw) {
     var txt = String(raw || "").trim()
-    if (!txt) return { hasGames: [false,false,false,false,false,false,false], nextSelected: -1 }
-    var lines = txt.split("\n")
-    var arr = [false,false,false,false,false,false,false]
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim(); if (!line) continue
-        var parts = line.split(":"); if (parts.length < 2) continue
-        var d = parts[0], c = parseInt(parts[1]) || 0
-        var idx = weekDateStrs.indexOf(d)
-        if (idx >= 0) arr[idx] = c > 0
-    }
-    return { hasGames: arr }
+    if (!txt) return 0
+    var d = parseBoundedJson(txt)
+    if (!d || typeof d !== "object") return 0
+    var events = Array.isArray(d.events) ? d.events : []
+    return Math.min(events.length, MAX_EVENTS)
 }
 
 function nextSelectedDay(hasGames, selectedDay) {
@@ -290,17 +364,18 @@ function nextSelectedDay(hasGames, selectedDay) {
 function parseDetail(raw, selectedGame, leagueId) {
     var txt = String(raw || "").trim()
     if (!txt) throw new Error("No details")
-    var d = JSON.parse(txt)
+    var d = parseBoundedJson(txt)
+    if (!d || typeof d !== "object") throw new Error("No details")
     var header = d.header || {}
     var comp = header.competitions && header.competitions[0]
-    if (!comp) throw new Error("No details")
+    if (!comp || typeof comp !== "object") throw new Error("No details")
     var box = d.boxscore || {}
-    var teams = box.teams || []
+    var teams = Array.isArray(box.teams) ? box.teams : []
     var away = selectedGame ? selectedGame.away : null
     var home = selectedGame ? selectedGame.home : null
     var awayId = away ? away.id : null, homeId = home ? home.id : null
     var tAway = null, tHome = null
-    for (var i = 0; i < teams.length; i++) {
+    for (var i = 0; i < teams.length && i < 4; i++) {
         var t = teams[i], tid = t.team ? t.team.id : null, abbr = t.team ? t.team.abbreviation : null
         if (tid && awayId && String(tid) === String(awayId)) tAway = t
         else if (abbr && away && abbr === away.abbr) tAway = t
@@ -309,8 +384,8 @@ function parseDetail(raw, selectedGame, leagueId) {
     }
     if (!tAway && teams.length > 0) tAway = teams[0]
     if (!tHome && teams.length > 1) tHome = teams[1]
-    var statsA = tAway ? tAway.statistics || [] : []
-    var statsH = tHome ? tHome.statistics || [] : []
+    var statsA = tAway ? (Array.isArray(tAway.statistics) ? tAway.statistics : []).slice(0, MAX_STATS) : []
+    var statsH = tHome ? (Array.isArray(tHome.statistics) ? tHome.statistics : []).slice(0, MAX_STATS) : []
     var paired = []
     // MLB/nested: statistics are categories with .stats array; NFL/NBA flat
     var isNested = statsA.length && statsA[0] && Array.isArray(statsA[0].stats)
@@ -319,15 +394,15 @@ function parseDetail(raw, selectedGame, leagueId) {
         for (var j = 0; j < statsH.length; j++) {
             var ch = statsH[j]
             var cmap = {}
-            if (ch.stats) for (var jj = 0; jj < ch.stats.length; jj++) cmap[ch.stats[jj].name] = ch.stats[jj]
+            if (ch && Array.isArray(ch.stats)) for (var jj = 0; jj < ch.stats.length && jj < MAX_STATS; jj++) cmap[ch.stats[jj].name] = ch.stats[jj]
             catMapH[ch.name] = cmap
         }
         for (var k = 0; k < statsA.length; k++) {
             var ca = statsA[k]
-            if (!ca.stats || !ca.stats.length) continue
+            if (!ca || !Array.isArray(ca.stats) || !ca.stats.length) continue
             var cmapH = catMapH[ca.name] || {}
             var catPrefix = ca.displayName || ca.name || ""
-            for (var kk = 0; kk < ca.stats.length; kk++) {
+            for (var kk = 0; kk < ca.stats.length && kk < MAX_STATS; kk++) {
                 var nsA = ca.stats[kk]
                 var nsH = cmapH[nsA.name]
                 var lab = nsA.shortDisplayName || nsA.displayName || nsA.abbreviation || nsA.name
@@ -347,9 +422,10 @@ function parseDetail(raw, selectedGame, leagueId) {
     }
     if (paired.length === 0) {
         var compAway = null, compHome = null
-        for (var c = 0; c < comp.competitors.length; c++) { if (comp.competitors[c].homeAway === "away") compAway = comp.competitors[c]; else compHome = comp.competitors[c] }
+        var comps = Array.isArray(comp.competitors) ? comp.competitors : []
+        for (var c = 0; c < comps.length && c < 4; c++) { if (comps[c].homeAway === "away") compAway = comps[c]; else if (comps[c].homeAway === "home") compHome = comps[c] }
         if (compAway && compHome) {
-            var qtrs = Math.max(compAway.linescores ? compAway.linescores.length : 0, compHome.linescores ? compHome.linescores.length : 0)
+            var qtrs = Math.min(Math.max(compAway.linescores ? compAway.linescores.length : 0, compHome.linescores ? compHome.linescores.length : 0), MAX_STATS)
             var pLab = periodLabelFor(leagueId || defaultLeagueId)
             for (var q = 0; q < qtrs; q++) {
                 var la = compAway.linescores && compAway.linescores[q] ? compAway.linescores[q].displayValue : "-"
@@ -358,37 +434,38 @@ function parseDetail(raw, selectedGame, leagueId) {
                 var lbl = (pLab === "Half" || pLab === "Inn") ? (pLab + " " + (q+1)) : (pLab + (q+1))
                 paired.push({ label: lbl, away: la, home: lh })
             }
-            paired.push({ label: "Total", away: compAway.score || "0", home: compHome.score || "0" })
-            if (compAway.records && compAway.records[0]) paired.push({ label: "Record", away: compAway.records[0].summary, home: compHome.records && compHome.records[0] ? compHome.records[0].summary : "-" })
+            paired.push({ label: "Total", away: clip(compAway.score, 16) || "0", home: clip(compHome.score, 16) || "0" })
+            if (compAway.records && compAway.records[0]) paired.push({ label: "Record", away: clip(compAway.records[0].summary, 60), home: compHome.records && compHome.records[0] ? clip(compHome.records[0].summary, 60) : "-" })
         }
     }
+    paired = sanitize(paired, 128, MAX_STR)
     var gv = (comp.venue && comp.venue.fullName) ? comp.venue : (d.gameInfo && d.gameInfo.venue) ? d.gameInfo.venue : null
     var venue = gv ? (gv.fullName || "") : ""
     var addr = ""
     if (gv && gv.address) addr = gv.address.city + (gv.address.state ? ", " + gv.address.state : "") + (gv.address.country && !gv.address.state ? ", " + gv.address.country : "")
     var st = comp.status || {}
     var stType = st.type || {}
-    var detailLeaders = d.leaders || []
-    var detailPlays = d.plays || d.keyEvents || []
+    var detailLeaders = sanitize(Array.isArray(d.leaders) ? d.leaders : [], MAX_LIST, MAX_STR)
+    var detailPlays = sanitize(Array.isArray(d.plays) ? d.plays : (Array.isArray(d.keyEvents) ? d.keyEvents : []), MAX_PLAYS, 1200)
     var detailDrives = []
     // NFL fallback: drives + scoringPlays when plays empty (preseason)
     if (!detailPlays.length && d.drives) {
         var dr = d.drives.previous || d.drives.drives || []
         if (!dr.length && d.drives.drives) dr = d.drives.drives
-        if (dr.length && dr[0].plays) detailDrives = dr.slice()
+        if (dr.length && dr[0].plays) detailDrives = sanitize(dr.slice(0, MAX_DRIVES), MAX_PLAYS, 1200)
         var flat = []
-        for (var di = 0; di < dr.length; di++) {
-            var dp = dr[di].plays || []
-            for (var pi = 0; pi < dp.length; pi++) flat.push(dp[pi])
+        for (var di = 0; di < dr.length && flat.length < MAX_PLAYS; di++) {
+            var dp = (dr[di] && Array.isArray(dr[di].plays)) ? dr[di].plays : []
+            for (var pi = 0; pi < dp.length && flat.length < MAX_PLAYS; pi++) flat.push(dp[pi])
         }
-        if (flat.length) detailPlays = flat
-        else if (d.scoringPlays && d.scoringPlays.length) detailPlays = d.scoringPlays.slice()
+        if (flat.length) detailPlays = sanitize(flat, MAX_PLAYS, 1200)
+        else if (Array.isArray(d.scoringPlays) && d.scoringPlays.length) detailPlays = sanitize(d.scoringPlays.slice(0, MAX_PLAYS), MAX_PLAYS, 1200)
     }
-    if (!detailPlays.length && d.scoringPlays && d.scoringPlays.length) detailPlays = d.scoringPlays.slice()
+    if (!detailPlays.length && Array.isArray(d.scoringPlays) && d.scoringPlays.length) detailPlays = sanitize(d.scoringPlays.slice(0, MAX_PLAYS), MAX_PLAYS, 1200)
     // keep drives for grouped display even when plays exist (regular season also has drives)
     if (!detailDrives.length && d.drives) {
         var dr2 = d.drives.previous || d.drives.drives || []
-        if (dr2.length && dr2[0].plays) detailDrives = dr2.slice()
+        if (dr2.length && dr2[0].plays) detailDrives = sanitize(dr2.slice(0, MAX_DRIVES), MAX_PLAYS, 1200)
     }
     // live NFL/CFB situation: down & distance + ball spot from the current drive
     var sit = ""
@@ -417,13 +494,15 @@ function parseDetail(raw, selectedGame, leagueId) {
             sit = (abbr ? abbr + " " : "") + ord + " & " + distTxt + (ylTxt ? " at " + ylTxt : "")
         }
     }
-    var detailInjuries = d.injuries || []
-    var detailStandings = d.standings || null
-    var detailNews = (d.news && d.news.articles) ? d.news.articles.slice(0, 3) : []
-    var detailVideos = d.videos ? d.videos.slice(0, 2) : []
-    var detailTeams = { away: away, home: home, venue: venue, addr: addr, status: stType.detail || "", situation: sit }
-    var detailPlayers = box.players || null
-    var rosters = d.rosters || null
+    var detailInjuries = sanitize(Array.isArray(d.injuries) ? d.injuries : [], MAX_INJURIES, MAX_STR)
+    var detailStandings = d.standings ? sanitize(d.standings, MAX_LIST, MAX_STR) : null
+    var detailNews = (d.news && Array.isArray(d.news.articles)) ? sanitize(d.news.articles.slice(0, 3), 8, MAX_STR) : []
+    var detailVideos = Array.isArray(d.videos) ? sanitize(d.videos.slice(0, 2), 4, MAX_STR) : []
+    var detailTeams = { away: away, home: home, venue: clip(venue, 200), addr: clip(addr, 200), status: clip(stType.detail, 100), situation: clip(sit, 120) }
+    var detailPlayers = (Array.isArray(box.players) && box.players.length) ? box.players.slice(0, 8).map(function(te) {
+        return { team: { abbreviation: clip(te.team ? te.team.abbreviation : "", 16) }, statistics: (Array.isArray(te.statistics) ? te.statistics : []).slice(0, MAX_STATS).map(function(sc) { return { labels: sanitize(Array.isArray(sc.labels) ? sc.labels : [], MAX_STATS, 60) } }) }
+    }) : null
+    var rosters = (Array.isArray(d.rosters) && d.rosters.length) ? d.rosters.slice(0, 4) : null
     var groups = [], groupMap = {}, order = []
     // Soccer uses d.rosters, not box.players
     if (rosters && rosters.length && (!box.players || !box.players.length)) {
@@ -431,9 +510,11 @@ function parseDetail(raw, selectedGame, leagueId) {
         var soccerLabels = null, soccerKeys = null
         // infer labels/keys from first player's stats
         for (var ri = 0; ri < rosters.length; ri++) {
-            if (rosters[ri].roster && rosters[ri].roster.length && rosters[ri].roster[0].stats) {
-                soccerLabels = rosters[ri].roster[0].stats.map(function(st){ return st.shortDisplayName || st.abbreviation || st.displayName || st.name })
-                soccerKeys = rosters[ri].roster[0].stats.map(function(st){ return st.name })
+            var r0 = rosters[ri]
+            if (r0 && Array.isArray(r0.roster) && r0.roster.length && Array.isArray(r0.roster[0].stats) && r0.roster[0].stats.length) {
+                var st0 = r0.roster[0].stats.slice(0, MAX_STATS)
+                soccerLabels = st0.map(function(st){ return clip(st.shortDisplayName || st.abbreviation || st.displayName || st.name, 60) })
+                soccerKeys = st0.map(function(st){ return clip(st.name, 60) })
                 break
             }
         }
@@ -442,44 +523,47 @@ function parseDetail(raw, selectedGame, leagueId) {
         var soccerGroup = { name: "players", displayName: "Players", labels: soccerLabels, keys: soccerKeys, away: [], home: [] }
         for (var rpi = 0; rpi < rosters.length; rpi++) {
             var rTeam = rosters[rpi]
-            var rAbbr = rTeam.team ? rTeam.team.abbreviation : ""
+            var rAbbr = rTeam && rTeam.team ? rTeam.team.abbreviation : ""
             var isRAway = away && rAbbr === away.abbr
             var isRHome = home && rAbbr === home.abbr
             var rList = []
-            for (var rj = 0; rj < (rTeam.roster || []).length; rj++) {
-                var re = rTeam.roster[rj]
+            var rRoster = (rTeam && Array.isArray(rTeam.roster)) ? rTeam.roster : []
+            for (var rj = 0; rj < rRoster.length && rList.length < MAX_PLAYERS; rj++) {
+                var re = rRoster[rj]
+                if (!re) continue
                 // build stats array aligned to soccerLabels/keys
                 var statMap = {}
-                for (var sk = 0; sk < (re.stats || []).length; sk++) statMap[re.stats[sk].name] = re.stats[sk].displayValue
+                var reStats = Array.isArray(re.stats) ? re.stats.slice(0, MAX_STATS) : []
+                for (var sk = 0; sk < reStats.length; sk++) statMap[reStats[sk].name] = reStats[sk].displayValue
                 var aligned = []
                 for (var kk = 0; kk < soccerKeys.length; kk++) {
                     var k = soccerKeys[kk]
-                    aligned.push(statMap[k] != null ? statMap[k] : "-")
+                    aligned.push(clip(statMap[k] != null ? statMap[k] : "-", 60))
                 }
-                rList.push({ athlete: re.athlete, stats: aligned, jersey: re.jersey, position: re.position })
+                rList.push({ athlete: sanitize(re.athlete, 2, 200), stats: aligned, jersey: clip(re.jersey, 16), position: sanitize(re.position, 2, 100) })
             }
             if (isRAway) soccerGroup.away = rList
             else if (isRHome) soccerGroup.home = rList
             else { if (rpi === 0) soccerGroup.away = rList; else soccerGroup.home = rList }
         }
         groups.push(soccerGroup)
-    } else if (box.players) {
-        for (var pi = 0; pi < box.players.length; pi++) {
+    } else if (Array.isArray(box.players) && box.players.length) {
+        for (var pi = 0; pi < box.players.length && pi < 4; pi++) {
             var teamEntry = box.players[pi]
-            var tAbbr = teamEntry.team ? teamEntry.team.abbreviation : ""
+            var tAbbr = teamEntry && teamEntry.team ? teamEntry.team.abbreviation : ""
             var isAway = away && tAbbr === away.abbr
             var isHome = home && tAbbr === home.abbr
-            var stats = teamEntry.statistics || []
+            var stats = (teamEntry && Array.isArray(teamEntry.statistics)) ? teamEntry.statistics.slice(0, MAX_STATS) : []
             for (var si = 0; si < stats.length; si++) {
                 var s = stats[si]
-                var gname = s.name || s.type || s.text || s.displayName || "stats"
-                if (!gname) gname = "stats"
-                if (!groupMap[gname]) { groupMap[gname] = { name: gname, displayName: s.displayName || s.shortDisplayName || s.type || gname, labels: s.labels || s.keys || [], keys: s.keys || [], away: [], home: [] }; order.push(gname) }
-                var list = s.athletes || []
-                if (isAway) groupMap[gname].away = list
-                else if (isHome) groupMap[gname].home = list
-                else { if (pi === 0) groupMap[gname].away = list; else groupMap[gname].home = list }
-                if ((!groupMap[gname].labels || groupMap[gname].labels.length === 0) && s.labels) groupMap[gname].labels = s.labels
+                if (!s) continue
+                var gname = clip(s.name || s.type || s.text || s.displayName || "stats", 60)
+                if (!groupMap[gname]) { groupMap[gname] = { name: gname, displayName: clip(s.displayName || s.shortDisplayName || s.type || gname, 100), labels: sanitize(Array.isArray(s.labels) ? s.labels : (Array.isArray(s.keys) ? s.keys : []), MAX_STATS, 60), keys: sanitize(Array.isArray(s.keys) ? s.keys : [], MAX_STATS, 60), away: [], home: [] }; order.push(gname) }
+                var list = Array.isArray(s.athletes) ? s.athletes : []
+                if (isAway) groupMap[gname].away = sanitize(list, MAX_PLAYERS, MAX_STR)
+                else if (isHome) groupMap[gname].home = sanitize(list, MAX_PLAYERS, MAX_STR)
+                else { if (pi === 0) groupMap[gname].away = sanitize(list, MAX_PLAYERS, MAX_STR); else groupMap[gname].home = sanitize(list, MAX_PLAYERS, MAX_STR) }
+                if ((!groupMap[gname].labels || groupMap[gname].labels.length === 0) && Array.isArray(s.labels)) groupMap[gname].labels = sanitize(s.labels, MAX_STATS, 60)
             }
         }
         for (var gi = 0; gi < order.length; gi++) groups.push(groupMap[order[gi]])
