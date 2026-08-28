@@ -216,8 +216,10 @@ var MAX_STR = 300              // default string cap in sanitize()
 var SANITIZE_DEPTH = 12        // max nesting depth retained
 var SANITIZE_NODES = 10000     // max total nodes retained
 
+// Truncate to n chars and defuse tag-leading strings so QML's Text.AutoText
+// never renders remote data as rich text (see security baseline above).
 function clip(s, n) {
-    s = String(s == null ? "" : s)
+    s = String(s == null ? "" : s).replace(/^(\s*<)/, "$1 ")
     return s.length > n ? s.substring(0, n) : s
 }
 
@@ -230,7 +232,7 @@ function sanitize(v, listCap, strCap) {
     function walk(x, depth) {
         if (budget-- <= 0 || depth > SANITIZE_DEPTH) return null
         if (x == null || typeof x !== "object") {
-            if (typeof x === "string") return x.length > strCap ? x.substring(0, strCap) : x
+            if (typeof x === "string") return clip(x, strCap)
             return x
         }
         if (Array.isArray(x)) {

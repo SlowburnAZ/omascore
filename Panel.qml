@@ -269,6 +269,8 @@ Panel {
     if (s.length > Model.MAX_TEXT) return null
     return s
   }
+  // Remote hrefs open only if https — no file:/custom-handler schemes on click
+  function safeHref(u) { u = String(u || ""); return /^https:\/\//.test(u) ? u : "" }
   function parseGames(raw, silent) {
     var txt = String(raw||"").trim()
     if (!txt) { root.games = []; root.lastError = ""; root.recount(); return }
@@ -1997,7 +1999,7 @@ Repeater {
                       elide: Text.ElideRight
                       wrapMode: Text.WordWrap
                       maximumLineCount: 2
-                      MouseArea { anchors.fill: parent; onClicked: Qt.openUrlExternally(modelData.links && modelData.links.web ? modelData.links.web.href : modelData.link ? modelData.link.href : "") ; cursorShape: Qt.PointingHandCursor }
+                      MouseArea { anchors.fill: parent; onClicked: Qt.openUrlExternally(root.safeHref(modelData.links && modelData.links.web ? modelData.links.web.href : modelData.link ? modelData.link.href : "")) ; cursorShape: Qt.PointingHandCursor }
                     }
                   }
                   Repeater {
@@ -2011,7 +2013,7 @@ Repeater {
                       elide: Text.ElideRight
                       wrapMode: Text.WordWrap
                       maximumLineCount: 2
-                      MouseArea { anchors.fill: parent; onClicked: Qt.openUrlExternally(modelData.links && modelData.links.source ? modelData.links.source.href : modelData.link ? modelData.link.href : "") ; cursorShape: Qt.PointingHandCursor }
+                      MouseArea { anchors.fill: parent; onClicked: Qt.openUrlExternally(root.safeHref(modelData.links && modelData.links.source ? modelData.links.source.href : modelData.link ? modelData.link.href : "")) ; cursorShape: Qt.PointingHandCursor }
                     }
                   }
                 }
