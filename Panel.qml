@@ -1448,20 +1448,38 @@ Panel {
               }
             }
 
-            Column {
+            // stats region scrolls under the pinned team header; height fills the
+            // panel cap minus whatever the positioner stacked above it (flick.y)
+            Flickable {
+              id: statsFlick
               width: parent.width
-              spacing: Style.space(6)
-              visible: root.detailLoading
-              Text {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                text: "Loading stats\u2026"
-                color: root.barForeground
-                opacity: 0.6
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
+              height: Math.min(statsContent.implicitHeight,
+                Math.max(Style.space(160), Math.min(panel.availableCardHeight, Style.space(560)) - panel.verticalContentInset - y))
+              clip: true
+              contentWidth: width
+              contentHeight: statsContent.implicitHeight
+              boundsBehavior: Flickable.StopAtBounds
+              ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+              Column {
+                id: statsContent
+                width: statsFlick.width
+                spacing: Style.space(14)
+
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: root.detailLoading
+                  Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "Loading stats\u2026"
+                    color: root.barForeground
+                    opacity: 0.6
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
 
             Text {
               width: parent.width
@@ -1869,10 +1887,10 @@ Repeater {
                           required property int index
                           width: parent.width
                           height: drivePlayRow.implicitHeight + Style.space(6)
-                          color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : "transparent"
-                          radius: 4
-                          border.width: modelData.scoringPlay ? 1 : 0
-                          border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)
+                        color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : "transparent"
+                        radius: 4
+                        border.width: modelData.scoringPlay ? 1 : 0
+                        border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)
                           RowLayout {
                             id: drivePlayRow
                             anchors.fill: parent
@@ -2212,6 +2230,8 @@ Repeater {
                 }
               }
             }
+            }
+          }
         }
       }
     }
