@@ -886,6 +886,9 @@ Panel {
             Column {
               required property var modelData
               required property int index
+              readonly property bool isFinal: modelData && modelData.state === "post"
+              readonly property bool awayLeads: modelData ? root.leads(modelData, "away") : false
+              readonly property bool homeLeads: modelData ? root.leads(modelData, "home") : false
               visible: root.listVisible
               width: parent.width
               spacing: Style.space(4)
@@ -921,6 +924,7 @@ Panel {
                 visible: modelData && modelData.away
                 Rectangle {
                   visible: modelData && (modelData.away.logo || "") !== ""
+                  opacity: isFinal && homeLeads ? 0.45 : 1
                   width: Style.space(20)
                   height: Style.space(20)
                   Layout.preferredWidth: Style.space(20)
@@ -951,6 +955,7 @@ Panel {
                   Layout.fillWidth: true
                   text: modelData ? modelData.away.abbr + "   " + modelData.away.name : ""
                   color: root.barForeground
+                  opacity: isFinal && homeLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: modelData && root.leads(modelData, "away")
@@ -961,6 +966,7 @@ Panel {
                 Text {
                   text: modelData && modelData.away ? modelData.away.score || "-" : "-"
                   color: modelData && root.leads(modelData, "away") ? Color.accent : root.barForeground
+                  opacity: isFinal && homeLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: true
@@ -973,6 +979,7 @@ Panel {
                 visible: modelData && modelData.home
                 Rectangle {
                   visible: modelData && (modelData.home.logo || "") !== ""
+                  opacity: isFinal && awayLeads ? 0.45 : 1
                   width: Style.space(20)
                   height: Style.space(20)
                   Layout.preferredWidth: Style.space(20)
@@ -1003,6 +1010,7 @@ Panel {
                   Layout.fillWidth: true
                   text: modelData ? modelData.home.abbr + "   " + modelData.home.name : ""
                   color: root.barForeground
+                  opacity: isFinal && awayLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: modelData && root.leads(modelData, "home")
@@ -1013,6 +1021,7 @@ Panel {
                 Text {
                   text: modelData && modelData.home ? modelData.home.score || "-" : "-"
                   color: modelData && root.leads(modelData, "home") ? Color.accent : root.barForeground
+                  opacity: isFinal && awayLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: true
