@@ -32,7 +32,9 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 
 ### Details Panel
 
-- **Overall tab**: Team statistics split by home/away with a vertical divider (labels are league-specific).
+- **Game list**: live rows carry a pulsing strip on the left edge, final games dim the losing team, and empty days tell you which day has games next.
+- **Detail view**: the team header stays pinned while the stats scroll beneath it. Each side is tinted with its real ESPN team color (dark hues are lifted until they read on the panel).
+- **Overall tab**: Team statistics split by home/away with a vertical divider (labels are league-specific). A split bar under each row is sized by each team's share, so the leading side is visible at a glance.
 - **Live situation**: for NFL/CFB games in progress, the current down & distance and ball spot render in accent under the venue line.
 - **Players tab**: Player statistics grouped by category with a fixed 110px Player column and horizontally scrollable stat columns.
 - **Favorites**: Teams saved per-league to `~/.local/state/omarchy/omascore-favorites.json` (migrated from old `nfl-favorites.json`) appear pinned at the top of the game list, above live games. Mirrored to `~/.config/omarchy/omascore-favorites.json` so `omarchy plugin disable` / `remove` + `add`/`enable` persists unless you delete both files.
@@ -40,7 +42,7 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 
 ### Navigation
 
-- All leagues share a **7-day selector** (Sun–Sat). Dots mark days with games; select a day to load its scores (`?dates=YYYYMMDD`).
+- All leagues share a **7-day selector** (Sun–Sat). Dots mark days with games; select a day to load its scores (`?dates=YYYYMMDD`). Today keeps a small underline when another day is selected.
 - Shift weeks with the **‹** / **›** buttons. On open, today is auto-selected — or, if today has no games, the next day that does.
 
 ## Remove
