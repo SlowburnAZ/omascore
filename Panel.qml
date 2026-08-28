@@ -280,6 +280,31 @@ Panel {
       if (!silent) root.checkScoreNotifications(r.games)
     } catch (e) { root.lastError = "Parse error" }
   }
+  FileView {
+    id: notifStore
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-notifications.json"
+    watchChanges: false
+    printErrors: false
+    blockLoading: true
+    blockWrites: true
+  }
+  // Cross-instance notification dedup. Every bar hosts its own Panel (one per
+  // screen), each polling ESPN independently, so a score transition fires once
+  // per instance. All instances share one quickshell process/event loop, so
+  // this sync claim is race-free: the first instance to observe a transition
+  // claims it and the others skip. The TTL only needs to cover poll stagger.
+  function claimNotification(key) {
+    var now = new Date().getTime()
+    var claims = {}
+    try { claims = JSON.parse(notifStore.text() || "{}") || {} } catch (e) {}
+    if (typeof claims !== "object" || claims === null) claims = {}
+    if (claims[key] && now - claims[key] < 45000) return false
+    var pruned = {}
+    for (var k in claims) if (now - claims[k] < 86400000) pruned[k] = claims[k]
+    pruned[key] = now
+    try { notifStore.setText(JSON.stringify(pruned)) } catch (e) {}
+    return true
+  }
   function checkScoreNotifications(games) {
     var next = {}
     for (var i = 0; i < games.length; i++) {
@@ -298,19 +323,19 @@ Panel {
       if (!root.notifyEnabled) continue
       if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
       var koMin = Model.kickoffMinutes(g.date, g.state, new Date())
-      if (koMin > 0 && !root.kickoffNotified[g.id]) {
+      if (koMin > 0 && !root.kickoffNotified[g.id] && !notifProc.running) {
+        if (!root.claimNotification("ko|" + root.currentLeagueId + "|" + g.id + "|" + koMin)) continue
         root.kickoffNotified[g.id] = true
-        if (!notifProc.running) {
-          notifProc.command = ["notify-send", "-a", "OmaScore",
-            g.away.abbr + " @ " + g.home.abbr + " kicks off in " + koMin + " min",
-            root.leagueLabel(root.currentLeagueId) + " \u00b7 " + root.gameStatus(g)]
-          notifProc.running = true
-        }
+        notifProc.command = ["notify-send", "-a", "OmaScore",
+          g.away.abbr + " @ " + g.home.abbr + " kicks off in " + koMin + " min",
+          root.leagueLabel(root.currentLeagueId) + " \u00b7 " + root.gameStatus(g)]
+        notifProc.running = true
       }
       if (old === undefined || old === cur) continue
       var ev = Model.scoreEvent(old, g)
       if (!ev) continue
       if (notifProc.running) continue
+      if (!root.claimNotification(root.currentLeagueId + "|" + g.id + "|" + ev + "|" + (g.away.score || "") + "|" + (g.home.score || ""))) continue
       notifProc.command = ev === "final"
         ? ["notify-send", "-a", "OmaScore",
             "Final \u2014 " + g.away.abbr + " " + (g.away.score || "0") + " \u00b7 " + g.home.abbr + " " + (g.home.score || "0"),
