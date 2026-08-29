@@ -39,6 +39,7 @@ Each side wears its real team color, lifted just enough to stay readable on the 
 - Fully keyboard-driven panel: `↑/↓` to move, `Enter` to open, `Esc` steps back
 - Settings screen (gear icon): toggle notifications, odds, and hiding finished games
 - Scores flash accent in the panel the moment they change
+- Star a team and its row glides to its new spot as the scores refresh; the same slide keeps the board ordered as games go live and go final
 - Loading draws placeholder rows shaped like real ones, and empty days tell you which day has games next
 
 Everything runs through the ESPN public API via `curl`. No keys, no accounts, no setup beyond favoriting your teams.

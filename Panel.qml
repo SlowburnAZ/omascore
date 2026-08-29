@@ -119,7 +119,10 @@ Panel {
   property var weekDates: []
   property var hasGames: [false,false,false,false,false,false,false]
   property int selectedDay: 0
-  readonly property int todayIndex: root.weekDateStrs.indexOf(Model.ymd(new Date()))
+  // refreshed on open: `new Date()` inside a binding never re-evaluates, so a
+  // panel running past midnight would otherwise pin "today" to its start date
+  property string todayYmd: Model.ymd(new Date())
+  readonly property int todayIndex: root.weekDateStrs.indexOf(root.todayYmd)
   property var dayLabels: Model.dayLabels
   property var monthLabels: Model.monthLabels
   // week fetch: one week-range scoreboard request, dots computed locally
@@ -765,6 +768,7 @@ Panel {
   Component.onCompleted: Qt.callLater(root.initForCurrent)
 
   onOpenedChanged: if (root.opened) {
+    root.todayYmd = Model.ymd(new Date())
     root.restoreLastLeague()
     if (!root.weekStart) root.initWeek(); else root.refreshSelected()
   }
