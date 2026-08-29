@@ -32,22 +32,42 @@ Panel {
   property string confGroupsLeague: ""
   property string lastFetchedDay: ""    // day of the payload parseGames is about to receive
   readonly property int liveBoardMaxAge: 150000  // shared board older than this is stale
-  // The bar reflects live favorites regardless of which day the panel browses:
-  // read today's shared board when fresh, else fall back to this instance's list.
-  // The day is computed per call, NOT from the todayYmd property — panels that
-  // stay closed for days (shell up across midnight) would otherwise read a
-  // days-old slot and never see live favorites (issue: bar only lit on the
-  // monitor whose panel had been opened).
-  function barGames() {
-    var e = Model.liveBoardEntry(root.currentLeagueId, Model.ymd(new Date()), root.liveBoardMaxAge)
-    return e ? e.games : root.games
+  // Leagues the bar covers: every league with a favorited team, plus whatever
+  // this panel browses (keeps the browsed league's "N live"/dimming semantics).
+  function barLeagues() {
+    var out = [root.currentLeagueId]
+    var favs = Model.favLeagues(Model.favorites)
+    for (var i = 0; i < favs.length; i++) if (out.indexOf(favs[i]) < 0) out.push(favs[i])
+    return out
+  }
+  // Shared board slots the bar reads, one per covered league. The day is
+  // computed per call, NOT from the todayYmd property — panels that stay
+  // closed for days (shell up across midnight) would otherwise read a days-old
+  // slot and never see live favorites (issue: bar only lit on the monitor
+  // whose panel had been opened). A missing/stale slot falls back to this
+  // instance's list only for the league it browses; other covered leagues
+  // contribute nothing until refreshBarFeed lands their slot.
+  function barSlots() {
+    var today = Model.ymd(new Date())
+    var leagues = root.barLeagues()
+    var out = []
+    for (var i = 0; i < leagues.length; i++) {
+      var lg = leagues[i]
+      var e = Model.liveBoardEntry(lg, today, root.liveBoardMaxAge)
+      out.push({ lg: lg, games: e ? e.games : (lg === root.currentLeagueId ? root.games : []) })
+    }
+    return out
   }
   readonly property var favLiveGames: {
     var out = []
-    var games = root.barGames()
-    for (var i = 0; i < games.length; i++) {
-      var g = games[i]
-      if (g.state === "in" && (root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) out.push(g)
+    var slots = root.barSlots()
+    for (var i = 0; i < slots.length; i++) {
+      var games = slots[i].games
+      for (var j = 0; j < games.length; j++) {
+        var g = games[j]
+        if (g.state === "in" && (Model.isFav(root.favorites, g.away.abbr, slots[i].lg) || Model.isFav(root.favorites, g.home.abbr, slots[i].lg)))
+          out.push({ g: g, lg: slots[i].lg })
+      }
     }
     return out
   }
@@ -60,15 +80,16 @@ Panel {
     onTriggered: root.favLiveRotate = (root.favLiveRotate + 1) % root.favLiveGames.length
   }
   readonly property string favLiveScore: {
-    var g = root.favLiveGame
+    var e = root.favLiveGame
+    var g = e ? e.g : null
     if (!g || !g.away || !g.home) return ""
-    return root.isFav(g.away.abbr)
+    return Model.isFav(root.favorites, g.away.abbr, e.lg)
       ? g.away.abbr + " " + (g.away.score || "0") + "-" + (g.home.score || "0")
       : g.home.abbr + " " + (g.home.score || "0") + "-" + (g.away.score || "0")
   }
   readonly property string favLiveLabel: {
-    var g = root.favLiveGame
-    return g ? g.away.abbr + " " + (g.away.score || "0") + " \u2014 " + g.home.abbr + " " + (g.home.score || "0") + " \u00b7 " + g.detail : ""
+    var e = root.favLiveGame
+    return e ? Model.leagueFor(e.lg).label + " \u00b7 " + e.g.away.abbr + " " + (e.g.away.score || "0") + " \u2014 " + e.g.home.abbr + " " + (e.g.home.score || "0") + " \u00b7 " + e.g.detail : ""
   }
   readonly property bool notifyEnabled: {
     var w = root.hostWidget
@@ -156,7 +177,7 @@ Panel {
   }
 
   function isFav(abbr) { return Model.isFav(root.favorites, abbr, root.currentLeagueId) }
-  function applyFavorites() { root.games = root.sorted(root.games); root.recount() }
+  function applyFavorites() { root.games = root.sorted(root.games); root.recount(); root.refreshBarFeed() }
   function saveFavorites() { dconfWrite(Model.DCONF_FAVORITES, JSON.stringify(root.favorites)) }
   // Per-panel sync: shared Model.favorites notifies these watchers on every
   // change from any panel. The source panel is skipped (it applied its own
@@ -189,9 +210,14 @@ Panel {
   function rank(g) { return Model.rank(g, root.favorites, root.currentLeagueId) }
   function sorted(list) { return Model.sorted(list, root.favorites, root.currentLeagueId) }
   function recount() {
-    var r = Model.recount(root.barGames(), root.favorites, root.currentLeagueId)
-    root.liveCount = r.liveCount; root.favLive = r.favLive
-    root.barGameCount = root.barGames().length
+    var slots = root.barSlots()
+    var live = 0, fav = false, count = 0
+    for (var i = 0; i < slots.length; i++) {
+      var r = Model.recount(slots[i].games, root.favorites, slots[i].lg)
+      live += r.liveCount; fav = fav || r.favLive; count += slots[i].games.length
+    }
+    root.liveCount = live; root.favLive = fav
+    root.barGameCount = count
   }
   function leads(game, side) { return Model.leads(game, side) }
   function titleize(s) { return Model.titleize(s) }
@@ -290,16 +316,28 @@ Panel {
     root.refreshSelected()
     root.refreshBarFeed()
   }
-  // Keeps today's shared board fresh even when every panel is browsing another
-  // day; instances stagger naturally via the shared timestamp, so this costs
-  // ~one extra request per poll interval across the whole process.
+  // Keeps the shared board fresh for every bar-covered league even when no
+  // panel is browsing that league; the needsFetch stagger costs ~one request
+  // per covered league per poll interval across the whole process.
+  property var barFeedQueue: []
+  property string barFeedLeague: ""
   function refreshBarFeed() {
     var today = Model.ymd(new Date())
-    if (!Model.liveBoardNeedsFetch(root.currentLeagueId, today, root.pollInterval - 2000)) return
-    var args = Model.fetchArgs(today, root.currentLeagueId)
-    if (!args) return
-    barFeedProc.running = false
-    barFeedProc.command = args
+    var leagues = root.barLeagues()
+    var queue = []
+    for (var i = 0; i < leagues.length; i++) {
+      if (!Model.liveBoardNeedsFetch(leagues[i], today, root.pollInterval - 2000)) continue
+      var args = Model.fetchArgs(today, leagues[i])
+      if (args) queue.push({ lg: leagues[i], args: args })
+    }
+    root.barFeedQueue = queue
+    root.pumpBarFeed()
+  }
+  function pumpBarFeed() {
+    if (barFeedProc.running || root.barFeedQueue.length === 0) return
+    var next = root.barFeedQueue.shift()
+    root.barFeedLeague = next.lg
+    barFeedProc.command = next.args
     barFeedProc.running = true
   }
   Process {
@@ -309,12 +347,14 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var t = root.gated(text)
-        if (t === null || !t.trim()) return
-        try {
-          var r = Model.parseGames(t)
-          Model.noteScoreboard(root.currentLeagueId, Model.ymd(new Date()), r.games)
-          root.recount()
-        } catch (e) {}
+        if (t !== null && t.trim()) {
+          try {
+            var r = Model.parseGames(t)
+            Model.noteScoreboard(root.barFeedLeague, Model.ymd(new Date()), r.games)
+            root.recount()
+          } catch (e) {}
+        }
+        root.pumpBarFeed()
       }
     }
   }
