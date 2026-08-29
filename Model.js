@@ -301,14 +301,18 @@ function setFavorites(f, source) {
     return favorites
 }
 
-// Truncate to n chars and neutralize tag-like content so QML's Text.AutoText
-// (the default on every Text in the plugin) never renders remote data as rich
-// text (see security baseline above). A soft hyphen (U+00AD) right after each
-// '<' makes Qt::mightBeRichText's tag scan hit its "that's not a tag" bail
-// (non-space, non-letter, non-digit char before any tag name), which also
-// defuses leading tags and <!doc / <?xml prologues; splitting "&lt;" closes
-// its literal-entity trigger. All raw-hostile fixtures verified against the
-// real Qt::mightBeRichText: RICH before, plain after, benign strings unchanged.
+// Truncate to n chars and neutralize tag-like content as defense in depth.
+// Every Text in Panel.qml now declares textFormat: Text.PlainText, so
+// AutoText rich-text detection never runs at any plugin sink — this guard
+// covers remaining/future sinks (e.g. the bar widget's tooltip text). A soft
+// hyphen (U+00AD) right after each '<' makes Qt::mightBeRichText's tag scan
+// hit its "that's not a tag" bail (non-space, non-letter, non-digit char
+// before any tag name), which also defuses leading tags and <!doc / <?xml
+// prologues; splitting "&lt;" closes its literal-entity trigger — the only
+// entity form the heuristic accepts (& + letters + ';': numeric forms like
+// "&#60;"/"&#x3c;" verified plain against the real Qt::mightBeRichText).
+// All raw-hostile fixtures verified against the real Qt::mightBeRichText:
+// RICH before, plain after, benign strings unchanged.
 function clip(s, n) {
     s = String(s == null ? "" : s).replace(/</g, "<\u00AD").replace(/&lt;/g, "&\u00ADlt;")
     return s.length > n ? s.substring(0, n) : s
