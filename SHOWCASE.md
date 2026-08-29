@@ -18,13 +18,13 @@ The widget tints and shows your favorite team's live score the moment their game
 
 Open the widget for the full scoreboard: a league switcher with your favorite leagues sorted first, a 7-day selector with game-count dots, team logos, and every game's status. Live scores show in accent, kickoff times in **your** timezone, and betting lines (spread + O/U) on upcoming games. Live rows pulse a thin strip on the left edge, finished games dim the loser, and the selector keeps an underline on today while you browse other weeks.
 
-*(attach: panel-games.png)*
+*(attach: games_panel.png)*
 
 **Tap a game for the full picture**
 
 Each side wears its real team color, lifted just enough to stay readable on the panel. The Overall tab draws a split bar under every stat row, sized by each team's share, so the leader is visible before you read a number. Team stats head-to-head, player stat tables, full play-by-play, injuries, and conference standings scroll beneath a pinned team header, with your two teams always in view, even mid-table. For NFL and CFB, a live situation line tracks the drive: `PIT 4th & 12 at BUF 31`, updating as the game moves.
 
-*(attach: game-detail.png)*
+*(attach: game_detail.png)*
 
 **It watches the games so you don't have to**
 
