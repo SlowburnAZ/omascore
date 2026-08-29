@@ -60,7 +60,8 @@ omarchy bar move slowburnaz.omascore --section right
 ## Dependencies
 
 - `curl` — all ESPN API calls run through it (preinstalled on Omarchy).
-- `jq` — counts games per day for the week-selector dots (preinstalled on Omarchy).
+- GNU coreutils (`dd`, `timeout`, `mv`, `rm`) — bounded no-follow reads and atomic
+  publish of the state/cache files (preinstalled on Omarchy).
 
 ## Debugging
 
