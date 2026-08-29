@@ -37,7 +37,7 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 - **Overall tab**: Team statistics split by home/away with a vertical divider (labels are league-specific). A split bar under each row is sized by each team's share, so the leading side is visible at a glance.
 - **Live situation**: for NFL/CFB games in progress, the current down & distance and ball spot render in accent under the venue line.
 - **Players tab**: Player statistics grouped by category with a fixed 110px Player column and horizontally scrollable stat columns.
-- **Favorites**: Teams saved per-league appear pinned at the top of the game list, above live games. They persist in dconf (the desktop settings store), so `omarchy plugin disable` / `remove` + `add`/`enable` keeps them; pre-dconf state files are migrated once on first run.
+- **Favorites**: Teams saved per-league appear pinned at the top of the game list, above live games. They persist in dconf (the desktop settings store), so `omarchy plugin disable` / `remove` + `add`/`enable` keeps them.
 - **Logos**: Team logos loaded from ESPN network sources (transparent PNG).
 
 ### Navigation
@@ -61,8 +61,6 @@ omarchy bar move slowburnaz.omascore --section right
 
 - `curl` — all ESPN API calls run through it (preinstalled on Omarchy).
 - `dconf` — favorites persist through the desktop settings daemon (preinstalled on Omarchy).
-- GNU coreutils (`dd`, `timeout`) — the one-time legacy favorites migration uses bounded
-  no-follow reads (preinstalled on Omarchy).
 
 ## Debugging
 

@@ -81,11 +81,8 @@ Panel {
   }
   property string lastError: ""
 
-  // One-time migration reads (dd, bounded, no-follow) of the pre-dconf state
-  // files; nothing is ever written to these paths, and favorites now live in
-  // dconf (see saveFavorites).
-  readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
-  readonly property string oldStorePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
+  // Favorites persist in dconf (see saveFavorites); the pre-dconf state files
+  // are no longer read or written.
   property var memClaims: ({})          // exact-once notification claims (one quickshell process, all panels)
   property var sessionCache: ({})       // per-league scoreboard paint cache, session-only
   readonly property string apiUrl: Model.apiUrl
@@ -149,28 +146,15 @@ Panel {
   function loadFavorites(raw) { root.favorites = Model.parseFavorites(raw) }
   function applyFavorites() { root.games = root.sorted(root.games); root.recount() }
   function saveFavorites() { dconfWrite(Model.DCONF_FAVORITES, JSON.stringify(root.favorites)) }
-  // Restore chain: dconf -> legacy state json -> legacy flat array, migrating
-  // whatever is found into dconf. The json reads go through the bounded no-follow
-  // dd helper; after this runs the plugin never opens those files again.
+  // Restore: read favorites from dconf. Empty on first run — no legacy file
+  // migration, the pre-dconf state files are dead.
   property bool favoritesRestored: false
   function restoreFavorites() {
     if (root.favoritesRestored) return
     root.favoritesRestored = true
     dconfRead(Model.DCONF_FAVORITES, function(raw) {
       root.loadFavorites(Model.dconfUnescape(raw))
-      if (Object.keys(root.favorites).length !== 0) { root.applyFavorites(); return }
-      root.boundedRead(root.storePath, Model.MAX_TEXT, function(raw2) {
-        root.loadFavorites(raw2)
-        if (Object.keys(root.favorites).length !== 0) { root.saveFavorites(); root.applyFavorites(); return }
-        root.boundedRead(root.oldStorePath, Model.MAX_TEXT, function(raw3) {
-          try {
-            var arr = JSON.parse(raw3 || "null")
-            if (Array.isArray(arr) && arr.length) root.favorites = { nfl: arr }
-          } catch (e) {}
-          if (Object.keys(root.favorites).length !== 0) root.saveFavorites()
-          root.applyFavorites()
-        })
-      })
+      root.applyFavorites()
     })
   }
   function toggleFav(abbr) {
@@ -340,49 +324,6 @@ Panel {
       root.recount()
       if (!silent) root.checkScoreNotifications(r.games)
     } catch (e) { root.lastError = "Parse error" }
-  }
-  // ---- Bounded no-follow state-file I/O (omarchy-plugin-marketplace#2934) ----
-  // Reads: one dd per read, opened with O_NOFOLLOW|O_NONBLOCK and byte-capped by
-  // count*bs on that same open, so the decoded bytes come from the validated
-  // descriptor and nothing can be loaded past the cap. Symlinks fail with ELOOP,
-  // FIFOs return immediately (nonblock), a timeout(1) belt bounds anything that
-  // never yields EOF, and oversized/device files are truncated at the cap.
-  // Failure or missing file yields "". Used only for the one-time legacy
-  // favorites migration reads; favorites themselves live in dconf (below).
-  readonly property int stateBs: 65536
-  property var readQueue: []
-  property var curRead: null
-  function boundedRead(path, cap, cb) {
-    if (!path) { cb(""); return }
-    root.readQueue.push({ path: path, cap: cap, cb: cb })
-    root.pumpRead()
-  }
-  function pumpRead() {
-    if (readProc.running || !root.readQueue.length) return
-    var job = root.readQueue.shift()
-    root.curRead = job
-    readProc.running = false
-    readProc.command = ["/usr/bin/timeout", "2", "/usr/bin/dd", "if=" + job.path,
-      "iflag=nofollow,nonblock", "bs=" + root.stateBs,
-      "count=" + Math.ceil(job.cap / root.stateBs), "status=none"]
-    readProc.running = true
-  }
-  Process {
-    id: readProc
-    command: []
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var job = root.curRead
-        root.curRead = null
-        if (job) {
-          var t = String(text)
-          job.cb(t.length > job.cap ? "" : t)   // dd already caps; belt for partial reads
-        }
-        root.pumpRead()
-      }
-    }
-    stderr: StdioCollector {}   // keep dd failure chatter out of the journal
   }
   // Favorites state lives in dconf: fixed-argv `dconf read/write`, no shell,
   // no state-file paths. Writes are serialized through dconf-service, which
