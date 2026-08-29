@@ -22,7 +22,6 @@ Panel {
   property int barGameCount: 0    // games on the shared today board; drives bar dimming
   readonly property int pollInterval: root.favLive ? 25000 : (root.liveCount > 0 ? 60000 : 120000)
   property bool leagueRestored: false
-  property var kickoffNotified: ({})
   property var scoreFlash: ({})
   property int flashTick: 0
   readonly property bool detailFlashing: root.flashTick >= 0 && root.selectedGame !== null && (root.scoreFlash[root.selectedGame.id] || 0) > 0 && new Date().getTime() - root.scoreFlash[root.selectedGame.id] < 700
@@ -92,8 +91,8 @@ Panel {
   property string lastError: ""
 
   // Favorites persist in dconf (see saveFavorites); the pre-dconf state files
-  // are no longer read or written.
-  property var memClaims: ({})          // exact-once notification claims (one quickshell process, all panels)
+  // are no longer read or written. Notification claims + kickoff marks live in
+  // Model (shared across panels) — see requestNotification.
   property var sessionCache: ({})       // per-league scoreboard paint cache, session-only
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
@@ -202,7 +201,7 @@ Panel {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.games = []; root.lastError = ""
     root.prevScores = ({})
-    root.kickoffNotified = ({})
+    Model.resetKickoffMarks()
     root.scoreFlash = ({})
     root.cursorIndex = -1
     root.confGroups = null
@@ -412,16 +411,12 @@ Panel {
   }
   // Cross-instance notification dedup. Every bar hosts its own Panel (one per
   // screen), each polling ESPN independently, so a score transition fires once
-  // per instance. All panels live in ONE quickshell process, so this in-memory
-  // claim map is exact-once there; entries expire after 45s so a genuinely new
-  // recurrence of the same key can notify again, and dead entries are pruned
-  // after 24h. No claim file exists, so there is nothing to harden on disk.
+  // per instance. All panels share ONE engine, so claims live in Model
+  // (Model.claimNotification) — per-panel maps here would let every instance
+  // fire its own copy, which is exactly the stacked-notification bug.
   function requestNotification(key, cmd, kickoffId) {
-    var now = new Date().getTime()
-    for (var k in root.memClaims) if (now - root.memClaims[k] >= 86400000) delete root.memClaims[k]
-    if (root.memClaims[key] && now - root.memClaims[key] < 45000) return
-    root.memClaims[key] = now
-    if (kickoffId) root.kickoffNotified[kickoffId] = true
+    if (!Model.claimNotification(key, new Date().getTime())) return
+    if (kickoffId) Model.kickoffNotified[kickoffId] = true
     if (!notifProc.running) { notifProc.command = cmd; notifProc.running = true }
   }
   function checkScoreNotifications(games) {
@@ -442,7 +437,7 @@ Panel {
       if (!root.notifyEnabled) continue
       if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
       var koMin = Model.kickoffMinutes(g.date, g.state, new Date())
-      if (koMin > 0 && !root.kickoffNotified[g.id] && !notifProc.running) {
+      if (koMin > 0 && !Model.kickoffNotified[g.id] && !notifProc.running) {
         root.requestNotification("ko|" + root.currentLeagueId + "|" + g.id + "|" + koMin,
           ["notify-send", "-a", "OmaScore",
             g.away.abbr + " @ " + g.home.abbr + " kicks off in " + koMin + " min",
