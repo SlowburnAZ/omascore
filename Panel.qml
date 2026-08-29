@@ -24,6 +24,7 @@ Panel {
   property var kickoffNotified: ({})
   property var scoreFlash: ({})
   property int flashTick: 0
+  property var pendingGames: null
   readonly property bool detailFlashing: root.flashTick >= 0 && root.selectedGame !== null && (root.scoreFlash[root.selectedGame.id] || 0) > 0 && new Date().getTime() - root.scoreFlash[root.selectedGame.id] < 700
   onDetailFlashingChanged: if (root.detailFlashing) detailFlashExpire.restart()
   property int cursorIndex: -1
@@ -174,8 +175,10 @@ Panel {
   function toggleFav(abbr) {
     root.favorites = Model.toggleFavMap(root.favorites, root.currentLeagueId, abbr)
     root.saveFavorites()
-    root.games = root.sorted(root.games)
+    // no immediate re-sort: rows jumping under the finger reads as a glitch —
+    // the reorder lands with the next fresh fetch instead
     root.recount()
+    root.refresh()
   }
   function isLeagueFav(id) { return Model.isLeagueFav(root.favorites, id) }
   function toggleLeagueFav(id) { root.favorites = Model.toggleLeagueFav(root.favorites, id); root.saveFavorites(); }
@@ -243,6 +246,8 @@ Panel {
     var url = Model.summaryUrl(game.id, root.currentLeagueId)
     if (!url) return
     root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    // detail replaces the list in the same scroll area: drop any list scroll offset
+    if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0
     detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
@@ -256,6 +261,7 @@ Panel {
   }
   function closeDetail() {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = false; root.detailStale = false
   }
@@ -285,13 +291,24 @@ Panel {
   }
   // Remote hrefs open only if https — no file:/custom-handler schemes on click
   function safeHref(u) { u = String(u || ""); return /^https:\/\//.test(u) ? u : "" }
+  // Replaces the games array; when the visible order changes, swap it at the
+  // bottom of a quick opacity dip so rows read as a refresh, not a teleport
+  function applyGames(games) {
+    var ids = function(list) { var s = ""; for (var i = 0; i < list.length; i++) s += list[i].id + ","; return s }
+    if (root.games.length > 0 && ids(root.games) !== ids(games)) {
+      root.pendingGames = games
+      listSwap.restart()
+    } else {
+      root.games = games
+    }
+  }
   function parseGames(raw, silent) {
     var txt = String(raw||"").trim()
     // empty response = failed fetch (curl -f swallows HTTP errors): keep last good list
     if (!txt) { root.recount(); return }
     try {
       var r = Model.parseGames(txt)
-      root.games = root.sorted(r.games)
+      root.applyGames(root.sorted(r.games))
       root.lastError = r.error
       // keep the open detail's score/status current; the header reads selectedGame
       if (root.selectedGame !== null) {
@@ -957,9 +974,15 @@ Panel {
             font.pixelSize: Style.font.body
           }
 
-          Repeater {
-            model: root.shownGames
+          Column {
+            id: gamesHost
+            width: parent.width
+            spacing: Style.space(14)
             visible: root.listVisible
+
+            Repeater {
+              model: root.shownGames
+              visible: root.listVisible
 
             Column {
               required property var modelData
@@ -1141,6 +1164,15 @@ Panel {
 
               PanelSeparator { foreground: root.barForeground }
             }
+          }
+          }
+
+          // fade out, swap the reordered list, fade back in
+          SequentialAnimation {
+            id: listSwap
+            NumberAnimation { target: gamesHost; property: "opacity"; to: 0; duration: 120 }
+            ScriptAction { script: { root.games = root.pendingGames; root.pendingGames = null } }
+            NumberAnimation { target: gamesHost; property: "opacity"; to: 1; duration: 180 }
           }
           Column {
             visible: root.showSettings
@@ -2279,5 +2311,4 @@ Repeater {
     }
   }
 }
-
 }
