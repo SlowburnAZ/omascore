@@ -215,8 +215,29 @@ var MAX_INJURIES = 24
 var MAX_STR = 300              // default string cap in sanitize()
 var SANITIZE_DEPTH = 12        // max nesting depth retained
 var SANITIZE_NODES = 10000     // max total nodes retained
-var MAX_CLAIM_TEXT = 65536     // notification claim file pre-parse byte gate (chars)
-var MAX_CLAIMS = 128           // notification claim map entry cap
+
+// --- Favorites state (dconf) ---
+// Favorites persist through the desktop dconf daemon: the plugin only runs
+// fixed-argv `dconf read/write` (same trust shape as the curl/stat/dd baseline)
+// and holds no state-file paths of its own. Values are GVariant text-format
+// strings, so the JSON payload is wrapped in single quotes with \ and '
+// escaped; dconf-service serializes concurrent writers for us.
+var DCONF_FAVORITES = "/net/slowburnaz/omascore/favorites"
+function dconfEscape(s) {
+    return "'" + String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'"
+}
+function dconfUnescape(s) {
+    s = String(s || "").trim()
+    // dconf read returns canonical GVariant text: the wrapper may be ' or "
+    if (s.length >= 2 && ((s.charAt(0) === "'" && s.charAt(s.length - 1) === "'") || (s.charAt(0) === '"' && s.charAt(s.length - 1) === '"'))) s = s.slice(1, -1)
+    var out = ""
+    for (var i = 0; i < s.length; i++) {
+        var c = s.charAt(i)
+        if (c === "\\" && i + 1 < s.length) { i++; c = s.charAt(i) }
+        out += c
+    }
+    return out
+}
 
 // Truncate to n chars and defuse tag-leading strings so QML's Text.AutoText
 // never renders remote data as rich text (see security baseline above).
@@ -239,7 +260,10 @@ function sanitize(v, listCap, strCap) {
         }
         if (Array.isArray(x)) {
             var a = []
-            for (var i = 0; i < x.length && i < listCap; i++) a.push(walk(x[i], depth + 1))
+            for (var i = 0; i < x.length && i < listCap; i++) {
+                var w = walk(x[i], depth + 1)
+                if (w !== null) a.push(w)
+            }
             return a
         }
         var o = {}
@@ -262,28 +286,6 @@ function parseBoundedJson(txt) {
 
 function validEventId(id) { return /^\d{1,12}$/.test(String(id == null ? "" : id)) }
 
-// Bounded load of the cross-panel notification claim file. The file lives in a
-// user-writable state dir and could be replaced (oversized/depth-bombed JSON,
-// entry flood, squatted keys with future timestamps). Everything failing the
-// shape check is discarded so only our own claim shape survives into the map.
-function sanitizeClaims(raw, now) {
-    var claims = {}
-    if (!raw || raw.length > MAX_CLAIM_TEXT) return claims
-    var parsed = parseBoundedJson(raw)
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return claims
-    for (var k in parsed) {
-        if (!parsed.hasOwnProperty(k)) continue
-        // our keys are "ko|league|gameId|koMin" or "league|gameId|event|score|score"
-        if (!/^[a-z0-9|-]{1,120}$/.test(k)) continue
-        var v = parsed[k]
-        if (typeof v !== "number" || !isFinite(v) || v <= 0 || v > now) continue
-        if (now - v >= 86400000) continue // older than 24h: dead claim
-        claims[k] = v
-    }
-    if (Object.keys(claims).length > MAX_CLAIMS) return {} // flood: keep nothing
-    return claims
-}
-
 function summaryUrl(eventId, leagueId) {
     if (!validEventId(eventId)) return ""
     if (leagueId) { var L = leagueFor(leagueId); return summaryBaseFor(L.sport, L.league) + "?event=" + eventId }
@@ -299,10 +301,12 @@ function fetchArgs(dateStr, leagueId) {
     if (!/^\d{8}$/.test(String(dateStr || ""))) return null
     return ["curl", "-fsS", "--max-time", "10", "--max-filesize", MAX_BYTES, scoreboardUrl(dateStr, leagueId)]
 }
-// Argument-array curl for one day of the has-games week scan.
-function weekArgs(dateStr, leagueId) {
-    if (!/^\d{8}$/.test(String(dateStr || ""))) return null
-    return ["curl", "-fsS", "--max-time", "5", "--max-filesize", MAX_BYTES, scoreboardUrl(dateStr, leagueId)]
+// Argument-array curl for one week-range scoreboard fetch (no shell involved).
+function weekArgs(dateStrs, leagueId) {
+    if (!Array.isArray(dateStrs) || dateStrs.length !== 7) return null
+    if (!/^\d{8}$/.test(dateStrs[0]) || !/^\d{8}$/.test(dateStrs[6])) return null
+    var L = leagueFor(leagueId)
+    return ["curl", "-fsS", "--max-time", "8", "--max-filesize", MAX_BYTES, apiUrlFor(L.sport, L.league) + "?dates=" + dateStrs[0] + "-" + dateStrs[6]]
 }
 function standingsUrlFor(sport, league) { return "https://site.api.espn.com/apis/v2/sports/" + sport + "/" + league + "/standings" }
 
@@ -370,15 +374,23 @@ function parseGames(raw) {
     return { games: out, error: out.length ? "" : "No games scheduled" }
 }
 
-// Week scan: one curl per day (argument-array, no shell) whose raw response is a
-// single-day scoreboard — only the event count matters for the dot indicators.
-function parseWeekDay(raw) {
+// One week-range scoreboard fetch (?dates=A-B) covers the whole selector week;
+// bucket each event by its LOCAL calendar day so dots match the panel's days.
+function parseWeekRange(raw, weekDateStrs) {
+    var out = [false, false, false, false, false, false, false]
     var txt = String(raw || "").trim()
-    if (!txt) return 0
+    if (!txt) return out
     var d = parseBoundedJson(txt)
-    if (!d || typeof d !== "object") return 0
+    if (!d || typeof d !== "object") return out
     var events = Array.isArray(d.events) ? d.events : []
-    return Math.min(events.length, MAX_EVENTS)
+    var cap = Math.min(events.length, MAX_EVENTS * 7)
+    for (var i = 0; i < cap; i++) {
+        var e = events[i]
+        if (!e || !e.date) continue
+        var idx = weekDateStrs.indexOf(ymd(new Date(e.date)))
+        if (idx >= 0) out[idx] = true
+    }
+    return out
 }
 
 function nextSelectedDay(hasGames, selectedDay) {

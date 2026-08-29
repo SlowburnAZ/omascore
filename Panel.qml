@@ -24,6 +24,8 @@ Panel {
   property var kickoffNotified: ({})
   property var scoreFlash: ({})
   property int flashTick: 0
+  readonly property bool detailFlashing: root.flashTick >= 0 && root.selectedGame !== null && (root.scoreFlash[root.selectedGame.id] || 0) > 0 && new Date().getTime() - root.scoreFlash[root.selectedGame.id] < 700
+  onDetailFlashingChanged: if (root.detailFlashing) detailFlashExpire.restart()
   property int cursorIndex: -1
   property string confFetchLeague: ""
   property var confGroups: null
@@ -79,40 +81,42 @@ Panel {
   }
   property string lastError: ""
 
-  readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
-  readonly property string oldStorePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
-  readonly property string backupPath: Quickshell.env("HOME") + "/.config/omarchy/omascore-favorites.json"
-  // State-dir files are user-replaceable (omarchy-plugin-marketplace#2934 re-review).
-  // All claim/cache reads and writes go through the dd-based helpers below: reads
-  // open once with O_NOFOLLOW|O_NONBLOCK and are byte-capped on that same open, so
-  // a post-check path replacement cannot substitute another object and no probe or
-  // TOCTOU window exists; writes stage into an O_EXCL|O_NOFOLLOW temp (fsync'd) and
-  // publish via mv (rename), which replaces a planted symlink instead of following it.
-  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy"
-  readonly property string claimPath: root.stateDir + "/omascore-notifications.json"
-  property var memClaims: ({})          // authoritative claim map; merged with the file on every claim
-  function cachePathFor(leagueId) { return root.stateDir + "/omascore-" + leagueId + "-cache.json" }
+  // Favorites persist in dconf (see saveFavorites); the pre-dconf state files
+  // are no longer read or written.
+  property var memClaims: ({})          // exact-once notification claims (one quickshell process, all panels)
+  property var sessionCache: ({})       // per-league scoreboard paint cache, session-only
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
 
   property string currentLeagueId: Model.defaultLeagueId
-  property bool hideFinished: false
+  readonly property bool hideFinished: {
+    var w = root.hostWidget
+    if (!w || typeof w.setting !== "function") return false
+    var v = w.setting("hideFinished", false)
+    return v === true || v === "true"
+  }
   property bool showSettings: false
   property var prevScores: ({})
   readonly property var shownGames: root.hideFinished
     ? root.games.filter(function(g) { return g.state !== "post" })
     : root.games
+  // ListView-backed games list: delegate data lives in this model so reorders
+  // animate as real row moves (move/displaced transitions) instead of a reset
+  ListModel { id: gamesModel; dynamicRoles: true }
+  onShownGamesChanged: reconcileGames()
   readonly property bool listVisible: root.selectedGame === null && !root.showSettings
   property var weekStart: null
   property var weekDateStrs: []
   property var weekDates: []
   property var hasGames: [false,false,false,false,false,false,false]
   property int selectedDay: 0
+  // refreshed on open: `new Date()` inside a binding never re-evaluates, so a
+  // panel running past midnight would otherwise pin "today" to its start date
+  property string todayYmd: Model.ymd(new Date())
+  readonly property int todayIndex: root.weekDateStrs.indexOf(root.todayYmd)
   property var dayLabels: Model.dayLabels
   property var monthLabels: Model.monthLabels
-  // week scan queue: one argv curl per day, drained sequentially by weekProc
-  property var weekQueue: []
-  property string weekFetchDay: ""
+  // week fetch: one week-range scoreboard request, dots computed locally
   property string weekFetchLeague: ""
 
   property var selectedGame: null
@@ -140,32 +144,26 @@ Panel {
 
   function isFav(abbr) { return Model.isFav(root.favorites, abbr, root.currentLeagueId) }
   function loadFavorites(raw) { root.favorites = Model.parseFavorites(raw) }
-  function saveFavorites() {
-    var txt = JSON.stringify(root.favorites, null, 2) + "\n"
-    store.setText(txt)
-    // ponytail: mirror to config backup so disable/remove/re-add survives state GC
-    try { backupStore.setText(txt) } catch(e) {}
-  }
-  function restoreFromBackupIfNeeded() {
-    if (Object.keys(root.favorites).length !== 0) return
-    try {
-      var bt = backupStore.text()
-      if (bt && bt.trim()) {
-        var parsed = Model.parseFavorites(bt)
-        if (Object.keys(parsed).length !== 0) {
-          root.favorites = parsed
-          store.setText(bt)
-          root.games = root.sorted(root.games)
-          root.recount()
-        }
-      }
-    } catch(e) {}
+  function applyFavorites() { root.games = root.sorted(root.games); root.recount() }
+  function saveFavorites() { dconfWrite(Model.DCONF_FAVORITES, JSON.stringify(root.favorites)) }
+  // Restore: read favorites from dconf. Empty on first run — no legacy file
+  // migration, the pre-dconf state files are dead.
+  property bool favoritesRestored: false
+  function restoreFavorites() {
+    if (root.favoritesRestored) return
+    root.favoritesRestored = true
+    dconfRead(Model.DCONF_FAVORITES, function(raw) {
+      root.loadFavorites(Model.dconfUnescape(raw))
+      root.applyFavorites()
+    })
   }
   function toggleFav(abbr) {
     root.favorites = Model.toggleFavMap(root.favorites, root.currentLeagueId, abbr)
     root.saveFavorites()
-    root.games = root.sorted(root.games)
+    // no immediate re-sort: rows jumping under the finger reads as a glitch —
+    // the reorder lands with the next fresh fetch instead
     root.recount()
+    root.refresh()
   }
   function isLeagueFav(id) { return Model.isLeagueFav(root.favorites, id) }
   function toggleLeagueFav(id) { root.favorites = Model.toggleLeagueFav(root.favorites, id); root.saveFavorites(); }
@@ -214,35 +212,27 @@ Panel {
   function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.cursorIndex = -1; root.refreshSelected() }
   function checkWeekGames() {
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
-    root.weekQueue = root.weekDateStrs.slice()
+    var args = Model.weekArgs(root.weekDateStrs, root.currentLeagueId)
+    if (!args) return
     root.weekFetchLeague = root.currentLeagueId
-    root.fetchNextWeekDay()
-  }
-  function fetchNextWeekDay() {
-    var d = root.weekQueue.length ? root.weekQueue.shift() : ""
-    if (!d) return
-    var args = Model.weekArgs(d, root.currentLeagueId)
-    if (!args) { root.fetchNextWeekDay(); return }
-    root.weekFetchDay = d
     weekProc.running = false; weekProc.command = args; weekProc.running = true
   }
   function refreshSelected() {
     var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
-    root.boundedRead(root.cachePathFor(root.currentLeagueId), Model.MAX_TEXT, root.cacheReadDone)
+    // session cache: paint the last payload for this league while the fresh fetch runs
+    if (root.games.length === 0 && root.sessionCache[root.currentLeagueId]) root.parseGames(root.sessionCache[root.currentLeagueId], true)
     var args = Model.fetchArgs(ds, root.currentLeagueId)
     if (!args) return
     fetchProc.running = false; fetchProc.command = args; fetchProc.running = true
-  }
-  function cacheReadDone(raw) {
-    var t = root.gated(raw)
-    if (t !== null && root.games.length === 0) root.parseGames(t, true)
   }
   function showDetail(game) {
     if (!game || !Model.validEventId(game.id)) return
     var url = Model.summaryUrl(game.id, root.currentLeagueId)
     if (!url) return
     root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    // detail replaces the list in the same scroll area: drop any list scroll offset
+    if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0
     detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
@@ -256,6 +246,7 @@ Panel {
   }
   function closeDetail() {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
+    if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = false; root.detailStale = false
   }
@@ -285,178 +276,119 @@ Panel {
   }
   // Remote hrefs open only if https — no file:/custom-handler schemes on click
   function safeHref(u) { u = String(u || ""); return /^https:\/\//.test(u) ? u : "" }
+  // Diff shownGames into gamesModel in place: setProperty refreshes scores
+  // without recreating delegates, move() slides rows to their new position
+  function reconcileGames() {
+    var want = root.shownGames
+    var ids = {}
+    for (var i = 0; i < want.length; i++) ids[want[i].id] = true
+    for (var i = gamesModel.count - 1; i >= 0; i--) {
+      var cur = gamesModel.get(i).game
+      if (!cur || !ids[cur.id]) gamesModel.remove(i)
+    }
+    for (var i = 0; i < want.length; i++) {
+      var g = want[i]
+      var pos = -1
+      for (var j = i; j < gamesModel.count; j++) {
+        var m = gamesModel.get(j).game
+        if (m && m.id === g.id) { pos = j; break }
+      }
+      if (pos === -1) {
+        gamesModel.insert(i, { game: g })
+      } else {
+        if (pos !== i) gamesModel.move(pos, i, 1)
+        gamesModel.setProperty(i, "game", g)
+      }
+    }
+  }
   function parseGames(raw, silent) {
     var txt = String(raw||"").trim()
-    if (!txt) { root.games = []; root.lastError = ""; root.recount(); return }
+    // empty response = failed fetch (curl -f swallows HTTP errors): keep last good list
+    if (!txt) { root.recount(); return }
     try {
       var r = Model.parseGames(txt)
       root.games = root.sorted(r.games)
       root.lastError = r.error
+      // keep the open detail's score/status current; the header reads selectedGame
+      if (root.selectedGame !== null) {
+        for (var i = 0; i < r.games.length; i++) {
+          if (r.games[i].id === root.selectedGame.id) {
+            root.selectedGame.away.score = r.games[i].away.score
+            root.selectedGame.home.score = r.games[i].home.score
+            root.selectedGame.state = r.games[i].state
+            root.selectedGame.detail = r.games[i].detail
+            break
+          }
+        }
+      }
       root.recount()
       if (!silent) root.checkScoreNotifications(r.games)
     } catch (e) { root.lastError = "Parse error" }
   }
-  // ---- Bounded no-follow state-file I/O (omarchy-plugin-marketplace#2934) ----
-  // Reads: one dd per read, opened with O_NOFOLLOW|O_NONBLOCK and byte-capped by
-  // count*bs on that same open, so the decoded bytes come from the validated
-  // descriptor and nothing can be loaded past the cap. Symlinks fail with ELOOP,
-  // FIFOs return immediately (nonblock), a timeout(1) belt bounds anything that
-  // never yields EOF, and oversized/device files are truncated at the cap.
-  // Failure or missing file yields "".
-  readonly property int stateBs: 65536
-  property var readQueue: []
-  property var curRead: null
-  function boundedRead(path, cap, cb) {
-    if (!path) { cb(""); return }
-    root.readQueue.push({ path: path, cap: cap, cb: cb })
-    root.pumpRead()
-  }
-  function pumpRead() {
-    if (readProc.running || !root.readQueue.length) return
-    var job = root.readQueue.shift()
-    root.curRead = job
-    readProc.running = false
-    readProc.command = ["/usr/bin/timeout", "2", "/usr/bin/dd", "if=" + job.path,
-      "iflag=nofollow,nonblock", "bs=" + root.stateBs,
-      "count=" + Math.ceil(job.cap / root.stateBs), "status=none"]
-    readProc.running = true
+  // Favorites state lives in dconf: fixed-argv `dconf read/write`, no shell,
+  // no state-file paths. Writes are serialized through dconf-service, which
+  // also serializes concurrent writers from other panel instances.
+  property var dconfQueue: []
+  property var curDconf: null
+  function dconfRead(key, cb) { root.dconfQueue.push({ key: key, cb: cb, write: null }); root.pumpDconf() }
+  function dconfWrite(key, str, cb) { root.dconfQueue.push({ key: key, cb: cb, write: str }); root.pumpDconf() }
+  function pumpDconf() {
+    if (dconfProc.running || !root.dconfQueue.length) return
+    var job = root.dconfQueue.shift()
+    root.curDconf = job
+    dconfProc.running = false
+    dconfProc.command = job.write !== null
+      ? ["/usr/bin/dconf", "write", job.key, Model.dconfEscape(job.write)]
+      : ["/usr/bin/dconf", "read", job.key]
+    dconfProc.running = true
   }
   Process {
-    id: readProc
+    id: dconfProc
     command: []
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var job = root.curRead
-        root.curRead = null
-        if (job) {
-          var t = String(text)
-          job.cb(t.length > job.cap ? "" : t)   // dd already caps; belt for partial reads
-        }
-        root.pumpRead()
-      }
-    }
-    stderr: StdioCollector {}   // keep dd failure chatter out of the journal
-  }
-  // Writes: the payload is staged by dd into a same-directory O_EXCL|O_NOFOLLOW
-  // temp (fsync'd) and then published by mv (rename), which is atomic and
-  // replaces anything planted at the target — including symlinks — instead of
-  // following it. Any dd/mv failure leaves the target untouched (fail closed).
-  // validate: JSON round-trip before I/O (claims are cheap; cache payloads were
-  // already parsed upstream, so they skip the re-parse).
-  property var writeQueue: []
-  property var curWrite: null
-  function safePublish(path, str, cb, validate) {
-    if (!path) { if (cb) cb(false); return }
-    if (validate) { try { JSON.parse(str) } catch (e) { if (cb) cb(false); return } }
-    root.writeQueue.push({ path: path, str: str, cb: cb })
-    root.pumpWrite()
-  }
-  function pumpWrite() {
-    if (writeProc.running || publishProc.running || !root.writeQueue.length) return
-    var job = root.writeQueue.shift()
-    job.tmp = job.path + "." + new Date().getTime() + "." + Math.floor(Math.random() * 1000000) + ".tmp"
-    job.step = "dd"
-    root.curWrite = job
-    writeProc.stdinEnabled = true
-    writeProc.running = false
-    writeProc.command = ["/usr/bin/dd", "of=" + job.tmp, "oflag=nofollow", "conv=excl,fsync", "status=none"]
-    writeProc.running = true
-  }
-  function finishWrite(ok) {
-    var job = root.curWrite
-    root.curWrite = null
-    if (job && job.cb) job.cb(ok)
-    root.pumpWrite()
-  }
-  Process {
-    id: writeProc
-    command: []
-    onStarted: {
-      if (!root.curWrite || root.curWrite.step !== "dd") return
-      write(root.curWrite.str)
-      stdinEnabled = false   // EOF for dd; the channel reopens on the next run
-    }
+    stdout: StdioCollector { id: dconfOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var job = root.curWrite
+      var job = root.curDconf
+      root.curDconf = null
       if (!job) return
-      if (job.step === "dd") {
-        if (exitCode === 0) {
-          job.step = "mv"
-          publishProc.running = false
-          publishProc.command = ["/usr/bin/mv", "-f", job.tmp, job.path]
-          publishProc.running = true
-        } else {                 // stage failed (excl/nofollow/fsync): target untouched
-          job.step = "rm"
-          running = false
-          command = ["/usr/bin/rm", "-f", job.tmp]
-          running = true
-        }
-      } else root.finishWrite(false)   // rm finished
+      if (job.write !== null) {
+        if (exitCode !== 0) console.log("OmaScore: dconf write failed; favorites session-only this run")
+        if (job.cb) job.cb(exitCode === 0)
+      } else {
+        job.cb(exitCode === 0 ? String(dconfOut.text) : "")
+      }
     }
   }
+  // Hot-reload: another panel instance starring a team lands here too.
   Process {
-    id: publishProc
-    command: []
-    onExited: function(exitCode) {
-      var job = root.curWrite
-      if (job && exitCode !== 0) {   // publish failed: target untouched, clean the stage
-        job.step = "rm"
-        writeProc.running = false
-        writeProc.command = ["/usr/bin/rm", "-f", job.tmp]
-        writeProc.running = true
-        return
+    id: dconfWatch
+    command: ["/usr/bin/dconf", "watch", "/net/slowburnaz/omascore"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        if (String(line).trim() === Model.DCONF_FAVORITES) root.reloadFavoritesFromDconf()
       }
-      root.finishWrite(exitCode === 0)
     }
+  }
+  function reloadFavoritesFromDconf() {
+    dconfRead(Model.DCONF_FAVORITES, function(raw) {
+      var parsed = Model.parseFavorites(Model.dconfUnescape(raw))
+      if (JSON.stringify(parsed) === JSON.stringify(root.favorites)) return
+      root.favorites = parsed
+      root.applyFavorites()
+    })
   }
   // Cross-instance notification dedup. Every bar hosts its own Panel (one per
   // screen), each polling ESPN independently, so a score transition fires once
-  // per instance. All instances share one quickshell process/event loop, so the
-  // decision on the merged map is race-free within the process; the file is
-  // re-read (bounded, no-follow) before every claim so other instances' claims
-  // are honored. The read → decide → publish sequence is no longer event-loop
-  // atomic (dd reads are async), so two instances landing their whole claim
-  // sequence inside the same few-ms window could still double-send; the 45s
-  // TTL covers ordinary poll stagger.
-  // The claim file is user-replaceable, so the load is bounded:
-  // Model.sanitizeClaims discards oversized/depth-bombed/flooded content,
-  // boundedRead caps the decode at MAX_CLAIM_TEXT on a no-follow open, and
-  // planted symlinks/FIFOs fail the read instead of being followed.
-  property var claimQueue: []
-  property bool claimBusy: false
-  property var curClaim: null
+  // per instance. All panels live in ONE quickshell process, so this in-memory
+  // claim map is exact-once there; entries expire after 45s so a genuinely new
+  // recurrence of the same key can notify again, and dead entries are pruned
+  // after 24h. No claim file exists, so there is nothing to harden on disk.
   function requestNotification(key, cmd, kickoffId) {
-    root.claimQueue.push({ key: key, cmd: cmd, kickoffId: kickoffId || "" })
-    root.pumpClaims()
-  }
-  function pumpClaims() {
-    if (root.claimBusy || !root.claimQueue.length) return
-    root.claimBusy = true
-    root.curClaim = root.claimQueue.shift()
-    root.boundedRead(root.claimPath, Model.MAX_CLAIM_TEXT, root.claimReadDone)
-  }
-  function claimReadDone(raw) {
-    var job = root.curClaim
     var now = new Date().getTime()
-    var claims = root.memClaims
-    for (var k in claims) if (now - claims[k] >= 86400000) delete claims[k]   // dead claims
-    var fileClaims = Model.sanitizeClaims(raw, now)
-    for (var k2 in fileClaims) claims[k2] = fileClaims[k2]
-    if (claims[job.key] && now - claims[job.key] < 45000) { root.finishClaim(false); return }
-    claims[job.key] = now
-    root.safePublish(root.claimPath, JSON.stringify(claims), null, true)
-    root.finishClaim(true)
-  }
-  function finishClaim(ok) {
-    var job = root.curClaim
-    root.curClaim = null
-    root.claimBusy = false
-    if (ok) {
-      if (job.kickoffId) root.kickoffNotified[job.kickoffId] = true
-      if (!notifProc.running) { notifProc.command = job.cmd; notifProc.running = true }
-    }
-    root.pumpClaims()
+    for (var k in root.memClaims) if (now - root.memClaims[k] >= 86400000) delete root.memClaims[k]
+    if (root.memClaims[key] && now - root.memClaims[key] < 45000) return
+    root.memClaims[key] = now
+    if (kickoffId) root.kickoffNotified[kickoffId] = true
+    if (!notifProc.running) { notifProc.command = cmd; notifProc.running = true }
   }
   function checkScoreNotifications(games) {
     var next = {}
@@ -498,6 +430,27 @@ Panel {
     root.prevScores = next
   }
   function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
+  // ESPN colors are 6-hex without "#" and often near-black; blend toward the theme
+  // foreground until the hue passes 4.5:1 contrast on the actual panel surface, so
+  // any team color stays legible (dark navy lifts, bright colors pass unchanged)
+  function teamColor(hex) {
+    var h = (hex || "").replace("#", "")
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return Color.accent
+    var c = Qt.rgba(parseInt(h.substring(0, 2), 16) / 255, parseInt(h.substring(2, 4), 16) / 255, parseInt(h.substring(4, 6), 16) / 255, 1)
+    var bg = Color.popups.background
+    for (var i = 0; i < 4 && contrastRatio(c, bg) < 4.5; i++)
+      c = Qt.rgba(c.r + (root.barForeground.r - c.r) * 0.35, c.g + (root.barForeground.g - c.g) * 0.35, c.b + (root.barForeground.b - c.b) * 0.35, 1)
+    return c
+  }
+  function luminance(c) {
+    function lin(v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+    return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+  }
+  function contrastRatio(a, b) {
+    var la = luminance(a), lb = luminance(b)
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+  }
+  function statNum(s) { var t = (s || "").trim(); return /^-?\d+(\.\d+)?$/.test(t) ? parseFloat(t) : 0 }
   function moveCursor(dy) {
     if (!root.listVisible) return
     root.cursorIndex = Math.max(-1, Math.min(root.shownGames.length - 1, root.cursorIndex + dy))
@@ -527,80 +480,6 @@ Panel {
     return ""
   }
 
-  FileView {
-    id: store
-    path: root.storePath
-    watchChanges: true
-    atomicWrites: true
-    printErrors: false
-    onLoaded: {
-      root.loadFavorites(text())
-      if (Object.keys(root.favorites).length == 0) {
-        // try backup before legacy (only when state empty)
-        root.restoreFromBackupIfNeeded()
-        if (Object.keys(root.favorites).length == 0) oldStore.reload()
-      }
-      root.games = root.sorted(root.games)
-      root.recount()
-    }
-    onLoadFailed: {
-      root.loadFavorites("{}")
-      root.restoreFromBackupIfNeeded()
-      if (Object.keys(root.favorites).length == 0) oldStore.reload()
-    }
-    onFileChanged: reload()
-  }
-  FileView {
-    id: backupStore
-    path: root.backupPath
-    watchChanges: false
-    atomicWrites: true
-    printErrors: false
-    blockLoading: true
-    onLoaded: {
-      // only authoritative when state is empty (e.g. after remove where state was GC'd)
-      if (Object.keys(root.favorites).length === 0) {
-        var bt = text() || ""
-        if (bt.trim()) {
-          try {
-            var parsed = Model.parseFavorites(bt)
-            if (Object.keys(parsed).length !== 0) {
-              root.favorites = parsed
-              store.setText(bt)
-              root.games = root.sorted(root.games)
-              root.recount()
-            }
-          } catch(e) {}
-        }
-      }
-    }
-    onLoadFailed: { /* first run: no backup yet */ }
-  }
-  FileView {
-    id: oldStore
-    path: root.oldStorePath
-    watchChanges: false
-    atomicWrites: false
-    printErrors: false
-    blockLoading: true
-    onLoaded: {
-      var txt = text() || ""
-      if (!txt.trim()) return
-      if (Object.keys(root.favorites).length != 0) return
-      // also abort if state already has content on disk (race: store loaded but favorites not yet set)
-      try { var st = store.text(); if (st && st.trim() && st.trim() !== "{}") return } catch(e) {}
-      try { var bt = backupStore.text(); if (bt && bt.trim() && bt.trim() !== "{}") return } catch(e) {}
-      try {
-        var arr = JSON.parse(txt)
-        if (Array.isArray(arr) && arr.length) {
-          root.favorites = { nfl: arr }
-          root.saveFavorites()
-          root.games = root.sorted(root.games)
-          root.recount()
-        }
-      } catch(e) {}
-    }
-  }
   Process {
     id: fetchProc
     command: []
@@ -610,8 +489,8 @@ Panel {
         var t = root.gated(text)
         if (t === null) return
         root.parseGames(t)
-        // persist as the league cache (replaces the old `tee` in the shell pipeline)
-        if (t.trim()) root.safePublish(root.cachePathFor(root.currentLeagueId), t, null, false)
+        // session paint cache (memory-only; nothing hits disk)
+        if (t.trim()) root.sessionCache[root.currentLeagueId] = t
       }
     }
   }
@@ -622,16 +501,12 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         // abandon a scan for a league we've already left
-        if (root.weekFetchLeague !== root.currentLeagueId) { root.weekQueue = []; return }
+        if (root.weekFetchLeague !== root.currentLeagueId) return
         var t = root.gated(text)
-        var n = (t === null) ? 0 : Model.parseWeekDay(t)
-        var idx = root.weekDateStrs.indexOf(root.weekFetchDay)
-        if (idx >= 0 && n > 0) { var a = root.hasGames.slice(); a[idx] = true; root.hasGames = a }
-        root.fetchNextWeekDay()
-        if (root.weekQueue.length === 0) {
-          var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
-          if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
-        }
+        if (t === null) return
+        root.hasGames = Model.parseWeekRange(t, root.weekDateStrs)
+        var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
+        if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
       }
     }
   }
@@ -681,6 +556,12 @@ Panel {
     running: true
     onTriggered: root.refresh()
   }
+
+  Timer {
+    id: detailFlashExpire
+    interval: 700
+    onTriggered: root.flashTick++
+  }
   onPollIntervalChanged: pollTimer.restart()
 
   function restoreLastLeague() {
@@ -692,10 +573,11 @@ Panel {
     root.leagueRestored = true
     if (saved !== root.currentLeagueId && Model.leagueFor(saved).id === saved) root.setLeague(saved)
   }
-  function initForCurrent() { root.restoreLastLeague(); root.initWeek() }
+  function initForCurrent() { root.restoreFavorites(); root.restoreLastLeague(); root.initWeek() }
   Component.onCompleted: Qt.callLater(root.initForCurrent)
 
   onOpenedChanged: if (root.opened) {
+    root.todayYmd = Model.ymd(new Date())
     root.restoreLastLeague()
     if (!root.weekStart) root.initWeek(); else root.refreshSelected()
   }
@@ -730,8 +612,9 @@ Panel {
         Column {
           id: panelColumn
           width: scrollArea.availableWidth - Style.space(28)
-          anchors.horizontalCenter: parent.horizontalCenter
-          anchors.horizontalCenterOffset: Style.space(4)
+          // horizontalCenter anchor is inert inside the ScrollView's content
+          // item — position explicitly so the 28px inset splits evenly
+          x: (scrollArea.availableWidth - width) / 2
           spacing: Style.space(14)
 
           Item {
@@ -759,6 +642,9 @@ Panel {
             Button {
               id: settingsButton
               anchors.right: parent.right
+              // cancel the Button's internal padding so the gear glyph's right
+              // edge lines up with the score column instead of floating inset
+              anchors.rightMargin: -settingsButton.horizontalPadding
               anchors.verticalCenter: parent.verticalCenter
               iconText: "\uf013"
               foreground: root.showSettings ? Color.accent : root.barForeground
@@ -891,6 +777,18 @@ Panel {
                     opacity: root.selectedDay === index ? 1 : 0.9
                   }
                 }
+
+                // today marker, independent of the selection
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  anchors.bottom: parent.bottom
+                  width: parent.width / 2
+                  height: 2
+                  radius: 1
+                  visible: index === root.todayIndex && root.selectedDay !== index
+                  color: root.barForeground
+                  opacity: 0.55
+                }
               }
             }
 
@@ -919,29 +817,67 @@ Panel {
           Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: root.lastError
+            text: {
+              if (root.lastError !== "No games scheduled") return root.lastError
+              var day = root.weekDates.length === 7 ? root.dayLabels[root.selectedDay] + " " + root.weekDates[root.selectedDay].getDate() : "this day"
+              var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
+              if (nxt >= 0) return "No games " + day + " \u2014 next up " + root.dayLabels[nxt]
+              return "No games " + day + " \u2014 try \u203A for next week"
+            }
             visible: root.lastError !== "" && root.games.length === 0 && root.listVisible
-            color: root.urgentColor
+            color: root.lastError === "No games scheduled" ? root.barForeground : root.urgentColor
+            opacity: root.lastError === "No games scheduled" ? 0.6 : 1
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
             elide: Text.ElideRight
           }
 
-          Text {
+          // skeleton rows shaped like game rows; visible only while waiting on the first load
+          Column {
+            id: loadingSkeleton
             width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: "Loading scores\u2026"
+            spacing: Style.space(12)
             visible: root.games.length === 0 && root.lastError === "" && root.listVisible
-            color: root.barForeground
-            opacity: 0.6
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
+
+            Repeater {
+              model: 3
+              delegate: Column {
+                required property int index
+                width: parent.width
+                spacing: Style.space(6)
+
+                Repeater {
+                  model: 2
+                  delegate: Row {
+                    required property int index
+                    width: parent.width
+                    spacing: Style.space(8)
+                    Rectangle { width: Style.space(20); height: Style.space(20); radius: Style.space(10); color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.09) }
+                    Rectangle { width: parent.width - Style.space(64); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07) }
+                    Rectangle { width: Style.space(28); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.05) }
+                  }
+                }
+                Rectangle {
+                  width: Style.space(64); height: Style.space(7); radius: Style.space(3)
+                  anchors.right: parent.right
+                  color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
+                }
+
+                SequentialAnimation on opacity {
+                  running: loadingSkeleton.visible
+                  loops: Animation.Infinite
+                  PauseAnimation { duration: index * 180 }
+                  NumberAnimation { to: 0.35; duration: 650; easing.type: Easing.InOutQuad }
+                  NumberAnimation { to: 1; duration: 650; easing.type: Easing.InOutQuad }
+                }
+              }
+            }
           }
 
           Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: "All games finished"
+            text: "All games finished \u2014 unhide them in Settings"
             visible: root.games.length > 0 && root.shownGames.length === 0 && root.listVisible
             color: root.barForeground
             opacity: 0.5
@@ -949,35 +885,73 @@ Panel {
             font.pixelSize: Style.font.body
           }
 
-          Repeater {
-            model: root.shownGames
+          ListView {
+            id: gamesHost
+            width: parent.width
+            height: contentHeight
+            interactive: false
+            clip: true
+            spacing: Style.space(14)
             visible: root.listVisible
+            model: gamesModel
 
-            Column {
-              required property var modelData
+            // real row movement: a reordered game slides to its spot while
+            // the rows it displaces slide out of the way
+            move: Transition { NumberAnimation { property: "y"; duration: 280; easing.type: Easing.OutCubic } }
+            displaced: Transition { NumberAnimation { property: "y"; duration: 280; easing.type: Easing.OutCubic } }
+            remove: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 120 } }
+
+            delegate: Column {
+              required property var game
               required property int index
+              readonly property var modelData: game
+              readonly property bool isFinal: modelData && modelData.state === "post"
+              readonly property bool awayLeads: modelData ? root.leads(modelData, "away") : false
+              readonly property bool homeLeads: modelData ? root.leads(modelData, "home") : false
               visible: root.listVisible
               width: parent.width
               spacing: Style.space(4)
 
-              Rectangle {
-                id: flashRect
-                anchors.fill: parent
-                anchors.margins: -Style.space(4)
-                z: -1
-                readonly property string gid: modelData ? modelData.id : ""
-                readonly property bool flashing: root.flashTick >= 0 && (root.scoreFlash[gid] || 0) > 0 && new Date().getTime() - root.scoreFlash[gid] < 700
-                onFlashingChanged: if (flashing) flashExpire.restart()
-                visible: index === root.cursorIndex || flashing || color.a > 0
-                color: index === root.cursorIndex
-                  ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
-                  : (flashing ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.28) : "transparent")
-                radius: Style.space(6)
-                Behavior on color { ColorAnimation { duration: 350 } }
-                Timer {
-                  id: flashExpire
-                  interval: 700
-                  onTriggered: root.flashTick++
+              // anchor host: positioner Columns forbid anchors on direct children,
+              // so flashRect anchors to this zero-height flow item instead
+              Item {
+                width: parent.width
+                implicitHeight: 0
+                Rectangle {
+                  id: flashRect
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(4)
+                  z: -1
+                  readonly property string gid: modelData ? modelData.id : ""
+                  readonly property bool flashing: root.flashTick >= 0 && (root.scoreFlash[gid] || 0) > 0 && new Date().getTime() - root.scoreFlash[gid] < 700
+                  onFlashingChanged: if (flashing) flashExpire.restart()
+                  visible: index === root.cursorIndex || flashing || color.a > 0 || (modelData && modelData.state === "in")
+                  color: index === root.cursorIndex
+                    ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                    : (flashing ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.28) : "transparent")
+                  radius: Style.space(6)
+                  Behavior on color { ColorAnimation { duration: 350 } }
+                  Timer {
+                    id: flashExpire
+                    interval: 700
+                    onTriggered: root.flashTick++
+                  }
+                  // live-only pulse strip: sweep the list for "on now" without reading status text
+                  Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 3
+                    radius: 1.5
+                    visible: modelData && modelData.state === "in"
+                    color: root.urgentColor
+                    SequentialAnimation on opacity {
+                      running: parent.visible
+                      loops: Animation.Infinite
+                      NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutQuad }
+                      NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
+                    }
+                  }
                 }
               }
 
@@ -991,6 +965,7 @@ Panel {
                 visible: modelData && modelData.away
                 Rectangle {
                   visible: modelData && (modelData.away.logo || "") !== ""
+                  opacity: isFinal && homeLeads ? 0.45 : 1
                   width: Style.space(20)
                   height: Style.space(20)
                   Layout.preferredWidth: Style.space(20)
@@ -1021,6 +996,7 @@ Panel {
                   Layout.fillWidth: true
                   text: modelData ? modelData.away.abbr + "   " + modelData.away.name : ""
                   color: root.barForeground
+                  opacity: isFinal && homeLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: modelData && root.leads(modelData, "away")
@@ -1031,6 +1007,7 @@ Panel {
                 Text {
                   text: modelData && modelData.away ? modelData.away.score || "-" : "-"
                   color: modelData && root.leads(modelData, "away") ? Color.accent : root.barForeground
+                  opacity: isFinal && homeLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: true
@@ -1043,6 +1020,7 @@ Panel {
                 visible: modelData && modelData.home
                 Rectangle {
                   visible: modelData && (modelData.home.logo || "") !== ""
+                  opacity: isFinal && awayLeads ? 0.45 : 1
                   width: Style.space(20)
                   height: Style.space(20)
                   Layout.preferredWidth: Style.space(20)
@@ -1073,6 +1051,7 @@ Panel {
                   Layout.fillWidth: true
                   text: modelData ? modelData.home.abbr + "   " + modelData.home.name : ""
                   color: root.barForeground
+                  opacity: isFinal && awayLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: modelData && root.leads(modelData, "home")
@@ -1083,6 +1062,7 @@ Panel {
                 Text {
                   text: modelData && modelData.home ? modelData.home.score || "-" : "-"
                   color: modelData && root.leads(modelData, "home") ? Color.accent : root.barForeground
+                  opacity: isFinal && awayLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: true
@@ -1122,7 +1102,6 @@ Panel {
               Text {
                 Layout.fillWidth: true
                 text: "Settings"
-                horizontalAlignment: Text.AlignRight
                 color: root.barForeground
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.subtitle
@@ -1161,7 +1140,7 @@ Panel {
               foreground: root.barForeground
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.hideFinished = !root.hideFinished
+              onClicked: root.setSetting("hideFinished", !root.hideFinished)
             }
           }
 
@@ -1181,19 +1160,36 @@ Panel {
                 fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
                 onClicked: root.closeDetail()
               }
-              Text {
+              Row {
                 Layout.fillWidth: true
-                text: root.selectedGame ? root.selectedGame.away.abbr + " @ " + root.selectedGame.home.abbr : ""
-                color: root.barForeground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.subtitle
-                font.bold: true
-                elide: Text.ElideRight
+                spacing: Style.space(6)
+                Text {
+                  text: root.selectedGame ? root.selectedGame.away.abbr : ""
+                  color: root.selectedGame && (root.selectedGame.away.color || "") !== "" ? root.teamColor(root.selectedGame.away.color) : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
+                Text {
+                  text: "@"
+                  color: root.barForeground
+                  opacity: 0.5
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
+                Text {
+                  text: root.selectedGame ? root.selectedGame.home.abbr : ""
+                  color: root.selectedGame && (root.selectedGame.home.color || "") !== "" ? root.teamColor(root.selectedGame.home.color) : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
               }
               Text {
                 text: root.selectedGame ? root.selectedGame.detail : ""
-                color: root.barForeground
-                opacity: 0.6
+                color: root.statusColor(root.selectedGame ? root.selectedGame.state : "")
+                opacity: root.selectedGame && root.selectedGame.state === "in" ? 1 : 0.6
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
               }
@@ -1218,6 +1214,12 @@ Panel {
                     sourceSize.width: 64
                   }
                 }
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: 36; height: 3; radius: 1.5
+                  visible: root.detailTeams && root.detailTeams.away && (root.detailTeams.away.color || "") !== ""
+                  color: root.detailTeams && root.detailTeams.away ? root.teamColor(root.detailTeams.away.color) : Color.accent
+                }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.abbr : ""
@@ -1231,7 +1233,7 @@ Panel {
                   spacing: Style.space(6)
                   Text {
                     text: root.selectedGame && root.selectedGame.away ? root.selectedGame.away.score : ""
-                    color: root.leads(root.selectedGame, "away") ? Color.accent : root.barForeground
+                    color: root.detailFlashing || root.leads(root.selectedGame, "away") ? Color.accent : root.barForeground
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
@@ -1282,6 +1284,12 @@ Panel {
                     sourceSize.width: 64
                   }
                 }
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: 36; height: 3; radius: 1.5
+                  visible: root.detailTeams && root.detailTeams.home && (root.detailTeams.home.color || "") !== ""
+                  color: root.detailTeams && root.detailTeams.home ? root.teamColor(root.detailTeams.home.color) : Color.accent
+                }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.abbr : ""
@@ -1295,7 +1303,7 @@ Panel {
                   spacing: Style.space(6)
                   Text {
                     text: root.selectedGame && root.selectedGame.home ? root.selectedGame.home.score : ""
-                    color: root.leads(root.selectedGame, "home") ? Color.accent : root.barForeground
+                    color: root.detailFlashing || root.leads(root.selectedGame, "home") ? Color.accent : root.barForeground
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
@@ -1423,20 +1431,38 @@ Panel {
               }
             }
 
-            Column {
+            // stats region scrolls under the pinned team header; height fills the
+            // panel cap minus whatever the positioner stacked above it (flick.y)
+            Flickable {
+              id: statsFlick
               width: parent.width
-              spacing: Style.space(6)
-              visible: root.detailLoading
-              Text {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                text: "Loading stats\u2026"
-                color: root.barForeground
-                opacity: 0.6
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
+              height: Math.min(statsContent.implicitHeight,
+                Math.max(Style.space(160), Math.min(panel.availableCardHeight, Style.space(560)) - panel.verticalContentInset - y))
+              clip: true
+              contentWidth: width
+              contentHeight: statsContent.implicitHeight
+              boundsBehavior: Flickable.StopAtBounds
+              ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+              Column {
+                id: statsContent
+                width: statsFlick.width
+                spacing: Style.space(14)
+
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: root.detailLoading
+                  Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "Loading stats\u2026"
+                    color: root.barForeground
+                    opacity: 0.6
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
 
             Text {
               width: parent.width
@@ -1475,9 +1501,9 @@ Panel {
                     RowLayout {
                       width: parent.width
                       spacing: Style.space(8)
-                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
+                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                       Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: ""; }
-                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.7 }
+                      Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                     }
                     Rectangle { width: parent.width; height: 1; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08) }
                     Repeater {
@@ -1485,19 +1511,45 @@ Panel {
                       delegate: Rectangle {
                         required property var modelData
                         required property int index
+                        readonly property real numA: Math.max(0, root.statNum(modelData.away))
+                        readonly property real numH: Math.max(0, root.statNum(modelData.home))
+                        readonly property real shareA: numA + numH > 0 ? numA / (numA + numH) : 0
+                        readonly property color awayCol: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : Color.accent
+                        readonly property color homeCol: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : Color.accent
                         width: parent.width
                         height: row.implicitHeight + Style.space(4)
                         color: index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent"
                         radius: 2
+                        // diverging bars: grow outward from the center divider, length = share of the stat
+                        Rectangle {
+                          anchors.bottom: parent.bottom
+                          anchors.right: parent.horizontalCenter
+                          anchors.rightMargin: Style.space(88)
+                          visible: shareA > 0
+                          width: visible ? Math.max(2, shareA * (parent.width / 2 - Style.space(92))) : 0
+                          height: 2
+                          radius: 1
+                          color: Qt.rgba(awayCol.r, awayCol.g, awayCol.b, 0.8)
+                        }
+                        Rectangle {
+                          anchors.bottom: parent.bottom
+                          anchors.left: parent.horizontalCenter
+                          anchors.leftMargin: Style.space(88)
+                          visible: numH > 0
+                          width: visible ? Math.max(2, (1 - shareA) * (parent.width / 2 - Style.space(92))) : 0
+                          height: 2
+                          radius: 1
+                          color: Qt.rgba(homeCol.r, homeCol.g, homeCol.b, 0.8)
+                        }
                         RowLayout {
                           id: row
                           anchors.fill: parent
                           anchors.leftMargin: Style.space(4)
                           anchors.rightMargin: Style.space(4)
                           spacing: Style.space(8)
-                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: numA > numH ? awayCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                           Text { Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: modelData.label; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
-                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: numH > numA ? homeCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                         }
                       }
                     }
@@ -1745,16 +1797,12 @@ Repeater {
               Text {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
-                visible: !root.detailPlayerGroups                }
-                Text {
-                  width: parent.width
-                  horizontalAlignment: Text.AlignHCenter
-                  visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
-                  text: "No player stats available"
-                  color: root.barForeground
-                  opacity: 0.5
-                  font.pixelSize: Style.font.bodySmall
-                }
+                visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
+                text: "No player stats available"
+                color: root.barForeground
+                opacity: 0.5
+                font.pixelSize: Style.font.bodySmall
+              }
               }
               // Plays tab (2) — full play-by-play, richer
               Column {
@@ -1822,10 +1870,10 @@ Repeater {
                           required property int index
                           width: parent.width
                           height: drivePlayRow.implicitHeight + Style.space(6)
-                          color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : "transparent"
-                          radius: 4
-                          border.width: modelData.scoringPlay ? 1 : 0
-                          border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)
+                        color: modelData.scoringPlay ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10) : "transparent"
+                        radius: 4
+                        border.width: modelData.scoringPlay ? 1 : 0
+                        border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25)
                           RowLayout {
                             id: drivePlayRow
                             anchors.fill: parent
@@ -2165,10 +2213,11 @@ Repeater {
                 }
               }
             }
+            }
+          }
         }
       }
     }
   }
 }
-
 }
