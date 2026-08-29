@@ -24,7 +24,6 @@ Panel {
   property var kickoffNotified: ({})
   property var scoreFlash: ({})
   property int flashTick: 0
-  property var pendingGames: null
   readonly property bool detailFlashing: root.flashTick >= 0 && root.selectedGame !== null && (root.scoreFlash[root.selectedGame.id] || 0) > 0 && new Date().getTime() - root.scoreFlash[root.selectedGame.id] < 700
   onDetailFlashingChanged: if (root.detailFlashing) detailFlashExpire.restart()
   property int cursorIndex: -1
@@ -114,6 +113,10 @@ Panel {
   readonly property var shownGames: root.hideFinished
     ? root.games.filter(function(g) { return g.state !== "post" })
     : root.games
+  // ListView-backed games list: delegate data lives in this model so reorders
+  // animate as real row moves (move/displaced transitions) instead of a reset
+  ListModel { id: gamesModel; dynamicRoles: true }
+  onShownGamesChanged: reconcileGames()
   readonly property bool listVisible: root.selectedGame === null && !root.showSettings
   property var weekStart: null
   property var weekDateStrs: []
@@ -291,15 +294,29 @@ Panel {
   }
   // Remote hrefs open only if https — no file:/custom-handler schemes on click
   function safeHref(u) { u = String(u || ""); return /^https:\/\//.test(u) ? u : "" }
-  // Replaces the games array; when the visible order changes, swap it at the
-  // bottom of a quick opacity dip so rows read as a refresh, not a teleport
-  function applyGames(games) {
-    var ids = function(list) { var s = ""; for (var i = 0; i < list.length; i++) s += list[i].id + ","; return s }
-    if (root.games.length > 0 && ids(root.games) !== ids(games)) {
-      root.pendingGames = games
-      listSwap.restart()
-    } else {
-      root.games = games
+  // Diff shownGames into gamesModel in place: setProperty refreshes scores
+  // without recreating delegates, move() slides rows to their new position
+  function reconcileGames() {
+    var want = root.shownGames
+    var ids = {}
+    for (var i = 0; i < want.length; i++) ids[want[i].id] = true
+    for (var i = gamesModel.count - 1; i >= 0; i--) {
+      var cur = gamesModel.get(i).game
+      if (!cur || !ids[cur.id]) gamesModel.remove(i)
+    }
+    for (var i = 0; i < want.length; i++) {
+      var g = want[i]
+      var pos = -1
+      for (var j = i; j < gamesModel.count; j++) {
+        var m = gamesModel.get(j).game
+        if (m && m.id === g.id) { pos = j; break }
+      }
+      if (pos === -1) {
+        gamesModel.insert(i, { game: g })
+      } else {
+        if (pos !== i) gamesModel.move(pos, i, 1)
+        gamesModel.setProperty(i, "game", g)
+      }
     }
   }
   function parseGames(raw, silent) {
@@ -308,7 +325,7 @@ Panel {
     if (!txt) { root.recount(); return }
     try {
       var r = Model.parseGames(txt)
-      root.applyGames(root.sorted(r.games))
+      root.games = root.sorted(r.games)
       root.lastError = r.error
       // keep the open detail's score/status current; the header reads selectedGame
       if (root.selectedGame !== null) {
@@ -705,8 +722,9 @@ Panel {
         Column {
           id: panelColumn
           width: scrollArea.availableWidth - Style.space(28)
-          anchors.horizontalCenter: parent.horizontalCenter
-          anchors.horizontalCenterOffset: Style.space(4)
+          // horizontalCenter anchor is inert inside the ScrollView's content
+          // item — position explicitly so the 28px inset splits evenly
+          x: (scrollArea.availableWidth - width) / 2
           spacing: Style.space(14)
 
           Item {
@@ -734,6 +752,9 @@ Panel {
             Button {
               id: settingsButton
               anchors.right: parent.right
+              // cancel the Button's internal padding so the gear glyph's right
+              // edge lines up with the score column instead of floating inset
+              anchors.rightMargin: -settingsButton.horizontalPadding
               anchors.verticalCenter: parent.verticalCenter
               iconText: "\uf013"
               foreground: root.showSettings ? Color.accent : root.barForeground
@@ -974,19 +995,26 @@ Panel {
             font.pixelSize: Style.font.body
           }
 
-          Column {
+          ListView {
             id: gamesHost
             width: parent.width
+            height: contentHeight
+            interactive: false
+            clip: true
             spacing: Style.space(14)
             visible: root.listVisible
+            model: gamesModel
 
-            Repeater {
-              model: root.shownGames
-              visible: root.listVisible
+            // real row movement: a reordered game slides to its spot while
+            // the rows it displaces slide out of the way
+            move: Transition { NumberAnimation { property: "y"; duration: 280; easing.type: Easing.OutCubic } }
+            displaced: Transition { NumberAnimation { property: "y"; duration: 280; easing.type: Easing.OutCubic } }
+            remove: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 120 } }
 
-            Column {
-              required property var modelData
+            delegate: Column {
+              required property var game
               required property int index
+              readonly property var modelData: game
               readonly property bool isFinal: modelData && modelData.state === "post"
               readonly property bool awayLeads: modelData ? root.leads(modelData, "away") : false
               readonly property bool homeLeads: modelData ? root.leads(modelData, "home") : false
@@ -1164,15 +1192,6 @@ Panel {
 
               PanelSeparator { foreground: root.barForeground }
             }
-          }
-          }
-
-          // fade out, swap the reordered list, fade back in
-          SequentialAnimation {
-            id: listSwap
-            NumberAnimation { target: gamesHost; property: "opacity"; to: 0; duration: 120 }
-            ScriptAction { script: { root.games = root.pendingGames; root.pendingGames = null } }
-            NumberAnimation { target: gamesHost; property: "opacity"; to: 1; duration: 180 }
           }
           Column {
             visible: root.showSettings
