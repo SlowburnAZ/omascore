@@ -19,6 +19,7 @@ Panel {
   property var favorites: ({})
   property int liveCount: 0
   property bool favLive: false
+  property int barGameCount: 0    // games on the shared today board; drives bar dimming
   readonly property int pollInterval: root.favLive ? 25000 : (root.liveCount > 0 ? 60000 : 120000)
   property bool leagueRestored: false
   property var kickoffNotified: ({})
@@ -30,10 +31,19 @@ Panel {
   property string confFetchLeague: ""
   property var confGroups: null
   property string confGroupsLeague: ""
+  property string lastFetchedDay: ""    // day of the payload parseGames is about to receive
+  readonly property int liveBoardMaxAge: 150000  // shared board older than this is stale
+  // The bar reflects live favorites regardless of which day the panel browses:
+  // read today's shared board when fresh, else fall back to this instance's list.
+  function barGames() {
+    var e = Model.liveBoardEntry(root.currentLeagueId, root.todayYmd, root.liveBoardMaxAge)
+    return e ? e.games : root.games
+  }
   readonly property var favLiveGames: {
     var out = []
-    for (var i = 0; i < root.games.length; i++) {
-      var g = root.games[i]
+    var games = root.barGames()
+    for (var i = 0; i < games.length; i++) {
+      var g = games[i]
       if (g.state === "in" && (root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) out.push(g)
     }
     return out
@@ -170,8 +180,9 @@ Panel {
   function rank(g) { return Model.rank(g, root.favorites, root.currentLeagueId) }
   function sorted(list) { return Model.sorted(list, root.favorites, root.currentLeagueId) }
   function recount() {
-    var r = Model.recount(root.games, root.favorites, root.currentLeagueId)
+    var r = Model.recount(root.barGames(), root.favorites, root.currentLeagueId)
     root.liveCount = r.liveCount; root.favLive = r.favLive
+    root.barGameCount = root.barGames().length
   }
   function leads(game, side) { return Model.leads(game, side) }
   function titleize(s) { return Model.titleize(s) }
@@ -220,6 +231,7 @@ Panel {
   function refreshSelected() {
     var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
+    root.lastFetchedDay = ds
     // session cache: paint the last payload for this league while the fresh fetch runs
     if (root.games.length === 0 && root.sessionCache[root.currentLeagueId]) root.parseGames(root.sessionCache[root.currentLeagueId], true)
     var args = Model.fetchArgs(ds, root.currentLeagueId)
@@ -265,7 +277,38 @@ Panel {
       root.detailLoading = false
     }
   }
-  function refresh() { root.refreshSelected() }
+  function refresh() {
+    root.refreshSelected()
+    root.refreshBarFeed()
+  }
+  // Keeps today's shared board fresh even when every panel is browsing another
+  // day; instances stagger naturally via the shared timestamp, so this costs
+  // ~one extra request per poll interval across the whole process.
+  function refreshBarFeed() {
+    var today = Model.ymd(new Date())
+    if (!Model.liveBoardNeedsFetch(root.currentLeagueId, today, root.pollInterval - 2000)) return
+    var args = Model.fetchArgs(today, root.currentLeagueId)
+    if (!args) return
+    barFeedProc.running = false
+    barFeedProc.command = args
+    barFeedProc.running = true
+  }
+  Process {
+    id: barFeedProc
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var t = root.gated(text)
+        if (t === null || !t.trim()) return
+        try {
+          var r = Model.parseGames(t)
+          Model.noteScoreboard(root.currentLeagueId, Model.ymd(new Date()), r.games)
+          root.recount()
+        } catch (e) {}
+      }
+    }
+  }
   // Collector-side cap (security baseline #2934): curl's --max-filesize enforces the
   // producer cap; this gates every parse path so oversized output never reaches
   // JSON.parse even if the producer cap were bypassed. Returns null when over cap.
@@ -308,6 +351,9 @@ Panel {
     try {
       var r = Model.parseGames(txt)
       root.games = root.sorted(r.games)
+      // share the fresh scoreboard process-wide (silent parses paint stale
+      // session data and must not pollute the shared board)
+      if (!silent) Model.noteScoreboard(root.currentLeagueId, root.lastFetchedDay, r.games)
       root.lastError = r.error
       // keep the open detail's score/status current; the header reads selectedGame
       if (root.selectedGame !== null) {

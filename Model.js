@@ -239,6 +239,32 @@ function dconfUnescape(s) {
     return out
 }
 
+// --- Shared live board (bar state) ---
+// Every per-screen panel instance imports this library into the SAME engine,
+// so a plain object here is shared process-wide. Each instance notes its
+// scoreboard fetches under its own (league, day) slot; bar state reads the
+// slot for today, so browsing other days never clobbers the live view.
+var liveBoard = {}
+function noteScoreboard(leagueId, day, games) {
+    if (!leagueId || !day || !games) return
+    var board = liveBoard
+    board[leagueId + "|" + day] = { at: new Date().getTime(), games: games }
+    var keys = Object.keys(board)
+    if (keys.length > 64) {           // keep memory bounded on long sessions
+        keys.sort(function(a, b) { return board[a].at - board[b].at })
+        for (var i = 0; i < keys.length - 64; i++) delete board[keys[i]]
+    }
+}
+function liveBoardEntry(leagueId, todayYmd, maxAgeMs) {
+    var e = liveBoard[leagueId + "|" + todayYmd]
+    if (!e || new Date().getTime() - e.at > maxAgeMs) return null
+    return e
+}
+function liveBoardNeedsFetch(leagueId, todayYmd, maxAgeMs) {
+    var e = liveBoard[leagueId + "|" + todayYmd]
+    return !(e && new Date().getTime() - e.at < maxAgeMs)
+}
+
 // Truncate to n chars and defuse tag-leading strings so QML's Text.AutoText
 // never renders remote data as rich text (see security baseline above).
 function clip(s, n) {

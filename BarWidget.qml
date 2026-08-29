@@ -57,10 +57,10 @@ BarWidget {
     text: root.panel && root.panel.favLive && root.panel.favLiveScore !== "" && !button.vertical
       ? "\u2605 " + root.panel.favLiveScore
       : "\uf091"
-    dimmed: !root.panel || root.panel.games.length === 0
+    dimmed: !root.panel || root.panel.barGameCount === 0
     active: root.panel ? root.panel.favLive : false
     foreground: root.panel && root.panel.favLive ? Color.accent : Color.foreground
-    tooltipText: !root.panel || root.panel.games.length === 0
+    tooltipText: !root.panel || root.panel.barGameCount === 0
       ? "OmaScore"
       : (root.panel.favLive && root.panel.favLiveLabel !== ""
            ? root.panel.favLiveLabel
