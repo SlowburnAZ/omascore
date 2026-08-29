@@ -265,10 +265,16 @@ function liveBoardNeedsFetch(leagueId, todayYmd, maxAgeMs) {
     return !(e && new Date().getTime() - e.at < maxAgeMs)
 }
 
-// Truncate to n chars and defuse tag-leading strings so QML's Text.AutoText
-// never renders remote data as rich text (see security baseline above).
+// Truncate to n chars and neutralize tag-like content so QML's Text.AutoText
+// (the default on every Text in the plugin) never renders remote data as rich
+// text (see security baseline above). A soft hyphen (U+00AD) right after each
+// '<' makes Qt::mightBeRichText's tag scan hit its "that's not a tag" bail
+// (non-space, non-letter, non-digit char before any tag name), which also
+// defuses leading tags and <!doc / <?xml prologues; splitting "&lt;" closes
+// its literal-entity trigger. All raw-hostile fixtures verified against the
+// real Qt::mightBeRichText: RICH before, plain after, benign strings unchanged.
 function clip(s, n) {
-    s = String(s == null ? "" : s).replace(/^(\s*<)/, "$1 ")
+    s = String(s == null ? "" : s).replace(/</g, "<\u00AD").replace(/&lt;/g, "&\u00ADlt;")
     return s.length > n ? s.substring(0, n) : s
 }
 
