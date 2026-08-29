@@ -197,6 +197,16 @@ function kickoffMinutes(dateStr, state, now) {
 
 function statusColor(state, urgent, defCol) { return state === "in" ? urgent : defCol }
 
+// Cross-panel notification claims. Every per-screen panel instance imports this
+// library into the SAME engine, so this map is shared process-wide and dedup is
+// exact without touching disk (file claims stay as best-effort cross-process).
+var _notifClaims = {}
+function claimSeen(key, ttlMs, now) {
+    if (_notifClaims[key] && now - _notifClaims[key] < ttlMs) return false
+    _notifClaims[key] = now
+    return true
+}
+
 // --- Security budgets (omarchy-plugin-marketplace#2934) ---
 // Remote responses are treated as hostile: every curl runs from a fixed argument
 // array with a producer-side --max-filesize (MAX_BYTES), every collector output

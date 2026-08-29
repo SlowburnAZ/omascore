@@ -96,14 +96,18 @@ Panel {
   ]
   property int claimPathIdx: 0          // index into claimPaths; -1 = all hostile: memory-only dedup
   property bool claimsReady: false      // probe finished
-  property var memClaims: ({})          // quarantine fallback for claimPathIdx === -1
   property var badPaths: ({})           // probed non-regular paths
   function cachePathFor(leagueId) { return root.stateDir + "/omascore-" + leagueId + "-cache.json" }
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
 
   property string currentLeagueId: Model.defaultLeagueId
-  property bool hideFinished: false
+  readonly property bool hideFinished: {
+    var w = root.hostWidget
+    if (!w || typeof w.setting !== "function") return false
+    var v = w.setting("hideFinished", false)
+    return v === true || v === "true"
+  }
   property bool showSettings: false
   property var prevScores: ({})
   readonly property var shownGames: root.hideFinished
@@ -354,18 +358,15 @@ Panel {
   // and the startup path probe keeps claims off any planted symlink.
   function claimNotification(key) {
     var now = new Date().getTime()
-    var claims
-    if (root.claimPathIdx < 0) claims = root.memClaims
-    else if (!root.claimsReady) return true // probe still in flight (first ms): send, next claim persists
-    else {
-      // sibling panels write claims between our polls; FileView caches, so re-read
-      // from disk or every per-screen instance believes it is first
-      notifStore.reload()
-      claims = Model.sanitizeClaims(notifStore.text(), now)
-    }
+    // all per-screen panels import Model.js into one engine: this shared map is
+    // the authoritative dedup; the claim file stays for cross-process best-effort
+    if (!Model.claimSeen(key, 45000, now)) return false
+    if (root.claimPathIdx < 0) return true
+    if (!root.claimsReady) return true // probe still in flight (first ms): send, next claim persists
+    var claims = Model.sanitizeClaims(notifStore.text(), now)
     if (claims[key] && now - claims[key] < 45000) return false
     claims[key] = now
-    if (root.claimPathIdx >= 0) { try { notifStore.setText(JSON.stringify(claims)) } catch (e) {} }
+    try { notifStore.setText(JSON.stringify(claims)) } catch (e) {}
     return true
   }
   function checkScoreNotifications(games) {
@@ -1160,7 +1161,6 @@ Panel {
               Text {
                 Layout.fillWidth: true
                 text: "Settings"
-                horizontalAlignment: Text.AlignRight
                 color: root.barForeground
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.subtitle
@@ -1199,7 +1199,7 @@ Panel {
               foreground: root.barForeground
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.hideFinished = !root.hideFinished
+              onClicked: root.setSetting("hideFinished", !root.hideFinished)
             }
           }
 
