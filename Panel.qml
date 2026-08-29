@@ -405,12 +405,12 @@ Panel {
     }
   }
   // Hot-reload: another panel instance starring a team lands here too.
-  // Note: dconf watch on a subpath reports nothing (dconf 0.49), so watch /
-  // and filter — change traffic on the session bus is tiny.
+  // Watch only the favorites key — nothing else on the bus concerns us.
+  // (Verified on dconf 0.49.0-1: exact-key watches emit normally.)
   Process {
     id: dconfWatch
     running: true
-    command: ["/usr/bin/dconf", "watch", "/"]
+    command: ["/usr/bin/dconf", "watch", Model.DCONF_FAVORITES]
     stdout: SplitParser {
       onRead: function(line) {
         if (String(line).trim() === Model.DCONF_FAVORITES) root.reloadFavoritesFromDconf()
