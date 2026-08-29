@@ -110,6 +110,18 @@ function toggleFavMap(favMap, leagueId, abbr) {
     return out
 }
 function isLeagueFav(favMap, leagueId) { var arr = favMap["favoriteLeagues"] || []; return arr.indexOf(leagueId) >= 0 }
+// League ids with at least one favorited team — the bar covers these plus
+// whatever league a panel browses (see Panel.barLeagues). Unknown/stale keys
+// and the favoriteLeagues marker are not fetchable leagues: filtered out.
+function favLeagues(favMap) {
+    var out = []
+    for (var k in favMap) {
+        if (k === "favoriteLeagues") continue
+        if (leagueFor(k).id !== k) continue
+        if (Array.isArray(favMap[k]) && favMap[k].length) out.push(k)
+    }
+    return out
+}
 function toggleLeagueFav(favMap, leagueId) {
     var out = {}
     for (var k in favMap) out[k] = favMap[k].slice()
