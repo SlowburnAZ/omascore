@@ -153,22 +153,25 @@ Panel {
   }
 
   function isFav(abbr) { return Model.isFav(root.favorites, abbr, root.currentLeagueId) }
-  function loadFavorites(raw) { root.favorites = Model.parseFavorites(raw) }
   function applyFavorites() { root.games = root.sorted(root.games); root.recount() }
   function saveFavorites() { dconfWrite(Model.DCONF_FAVORITES, JSON.stringify(root.favorites)) }
-  // Restore: read favorites from dconf. Empty on first run — no legacy file
-  // migration, the pre-dconf state files are dead.
+  // Per-panel sync: shared Model.favorites notifies these watchers on every
+  // change from any panel. The source panel is skipped (it applied its own
+  // update). Deregistration matters — hot reload destroys instances.
+  property var favWatcher: null
+  // Restore: read favorites from dconf once at startup. Empty on first run —
+  // no legacy file migration, the pre-dconf state files are dead.
   property bool favoritesRestored: false
   function restoreFavorites() {
     if (root.favoritesRestored) return
     root.favoritesRestored = true
     dconfRead(Model.DCONF_FAVORITES, function(raw) {
-      root.loadFavorites(Model.dconfUnescape(raw))
+      root.favorites = Model.setFavorites(Model.parseFavorites(Model.dconfUnescape(raw)), root.favWatcher)
       root.applyFavorites()
     })
   }
   function toggleFav(abbr) {
-    root.favorites = Model.toggleFavMap(root.favorites, root.currentLeagueId, abbr)
+    root.favorites = Model.setFavorites(Model.toggleFavMap(Model.favorites, root.currentLeagueId, abbr), root.favWatcher)
     root.saveFavorites()
     // no immediate re-sort: rows jumping under the finger reads as a glitch —
     // the reorder lands with the next fresh fetch instead
@@ -176,7 +179,10 @@ Panel {
     root.refresh()
   }
   function isLeagueFav(id) { return Model.isLeagueFav(root.favorites, id) }
-  function toggleLeagueFav(id) { root.favorites = Model.toggleLeagueFav(root.favorites, id); root.saveFavorites(); }
+  function toggleLeagueFav(id) {
+    root.favorites = Model.setFavorites(Model.toggleLeagueFav(Model.favorites, id), root.favWatcher)
+    root.saveFavorites()
+  }
   function rank(g) { return Model.rank(g, root.favorites, root.currentLeagueId) }
   function sorted(list) { return Model.sorted(list, root.favorites, root.currentLeagueId) }
   function recount() {
@@ -371,9 +377,9 @@ Panel {
       if (!silent) root.checkScoreNotifications(r.games)
     } catch (e) { root.lastError = "Parse error" }
   }
-  // Favorites state lives in dconf: fixed-argv `dconf read/write`, no shell,
-  // no state-file paths. Writes are serialized through dconf-service, which
-  // also serializes concurrent writers from other panel instances.
+  // dconf is persistence only: write-through on change, one read at startup.
+  // Cross-panel sync is in-process — all panels share one engine and land
+  // every change through Model.setFavorites — so no watch process exists.
   property var dconfQueue: []
   property var curDconf: null
   function dconfRead(key, cb) { root.dconfQueue.push({ key: key, cb: cb, write: null }); root.pumpDconf() }
@@ -403,27 +409,6 @@ Panel {
         job.cb(exitCode === 0 ? String(dconfOut.text) : "")
       }
     }
-  }
-  // Hot-reload: another panel instance starring a team lands here too.
-  // Watch only the favorites key — nothing else on the bus concerns us.
-  // (Verified on dconf 0.49.0-1: exact-key watches emit normally.)
-  Process {
-    id: dconfWatch
-    running: true
-    command: ["/usr/bin/dconf", "watch", Model.DCONF_FAVORITES]
-    stdout: SplitParser {
-      onRead: function(line) {
-        if (String(line).trim() === Model.DCONF_FAVORITES) root.reloadFavoritesFromDconf()
-      }
-    }
-  }
-  function reloadFavoritesFromDconf() {
-    dconfRead(Model.DCONF_FAVORITES, function(raw) {
-      var parsed = Model.parseFavorites(Model.dconfUnescape(raw))
-      if (JSON.stringify(parsed) === JSON.stringify(root.favorites)) return
-      root.favorites = parsed
-      root.applyFavorites()
-    })
   }
   // Cross-instance notification dedup. Every bar hosts its own Panel (one per
   // screen), each polling ESPN independently, so a score transition fires once
@@ -623,7 +608,15 @@ Panel {
     if (saved !== root.currentLeagueId && Model.leagueFor(saved).id === saved) root.setLeague(saved)
   }
   function initForCurrent() { root.restoreFavorites(); root.restoreLastLeague(); root.initWeek() }
-  Component.onCompleted: Qt.callLater(root.initForCurrent)
+  Component.onCompleted: {
+    root.favWatcher = function(f) { root.favorites = f; root.applyFavorites() }
+    Model.favWatchers.push(root.favWatcher)
+    Qt.callLater(root.initForCurrent)
+  }
+  Component.onDestruction: {
+    var i = Model.favWatchers.indexOf(root.favWatcher)
+    if (i >= 0) Model.favWatchers.splice(i, 1)
+  }
 
   onOpenedChanged: if (root.opened) {
     root.todayYmd = Model.ymd(new Date())
@@ -1031,7 +1024,7 @@ Panel {
                     cache: true
                     fillMode: Image.PreserveAspectFit
                     sourceSize.width: 40
-                    source: modelData && modelData.away ? (modelData.away.logo || "") : ""
+                    source: Model.safeMedia(modelData && modelData.away ? modelData.away.logo : "")
                   }
                 }
                 Button {
@@ -1086,7 +1079,7 @@ Panel {
                     cache: true
                     fillMode: Image.PreserveAspectFit
                     sourceSize.width: 40
-                    source: modelData && modelData.home ? (modelData.home.logo || "") : ""
+                    source: Model.safeMedia(modelData && modelData.home ? modelData.home.logo : "")
                   }
                 }
                 Button {
@@ -1256,7 +1249,7 @@ Panel {
                   width: Style.space(32); height: Style.space(32); radius: Style.space(6); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
                   Image {
                     anchors.fill: parent
-                    source: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.logo : ""
+                    source: Model.safeMedia(root.detailTeams && root.detailTeams.away ? root.detailTeams.away.logo : "")
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
@@ -1326,7 +1319,7 @@ Panel {
                   width: Style.space(32); height: Style.space(32); radius: Style.space(6); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
                   Image {
                     anchors.fill: parent
-                    source: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.logo : ""
+                    source: Model.safeMedia(root.detailTeams && root.detailTeams.home ? root.detailTeams.home.logo : "")
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
@@ -2044,7 +2037,7 @@ Repeater {
                       RowLayout {
                         width: parent.width
                         spacing: Style.space(8)
-                        Rectangle { width: Style.space(24); height: Style.space(24); radius: 12; clip: true; color: "transparent"; visible: modelData.team && modelData.team.logo; Image { anchors.fill: parent; source: modelData.team.logo || ""; fillMode: Image.PreserveAspectFit; asynchronous: true; cache: true } }
+                        Rectangle { width: Style.space(24); height: Style.space(24); radius: 12; clip: true; color: "transparent"; visible: modelData.team && modelData.team.logo; Image { anchors.fill: parent; source: Model.safeMedia(modelData.team.logo); fillMode: Image.PreserveAspectFit; asynchronous: true; cache: true } }
                         Text { text: modelData.team ? (modelData.team.abbreviation || modelData.team.displayName) : ""; color: root.barForeground; opacity: 0.6; font.pixelSize: Style.font.caption; font.bold: true; Layout.fillWidth: true }
                       }
                       Repeater {
@@ -2058,7 +2051,7 @@ Repeater {
                             Layout.preferredWidth: Style.space(28); Layout.preferredHeight: Style.space(28); radius: 14; clip: true; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
                             Image {
                               anchors.fill: parent
-                              source: leader && leader.athlete && leader.athlete.headshot ? leader.athlete.headshot.href : ""
+                              source: Model.safeMedia(leader && leader.athlete && leader.athlete.headshot ? leader.athlete.headshot.href : "")
                               fillMode: Image.PreserveAspectCrop
                               asynchronous: true; cache: true
                             }

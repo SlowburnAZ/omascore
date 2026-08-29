@@ -265,6 +265,22 @@ function liveBoardNeedsFetch(leagueId, todayYmd, maxAgeMs) {
     return !(e && new Date().getTime() - e.at < maxAgeMs)
 }
 
+// --- Shared favorites state ---
+// All per-screen panels import this library into the SAME engine, so favorites
+// live here process-wide: every toggle or startup restore lands through
+// setFavorites, which notifies the other panels' watchers. dconf is
+// persistence only — panels write through on change and read once at startup;
+// there is no watch process. The source panel of a change is skipped (it
+// already applied its own UI update).
+var favorites = {}
+var favWatchers = []
+function setFavorites(f, source) {
+    favorites = f || {}
+    for (var i = 0; i < favWatchers.length; i++)
+        if (favWatchers[i] !== source) favWatchers[i](favorites)
+    return favorites
+}
+
 // Truncate to n chars and neutralize tag-like content so QML's Text.AutoText
 // (the default on every Text in the plugin) never renders remote data as rich
 // text (see security baseline above). A soft hyphen (U+00AD) right after each
@@ -341,6 +357,15 @@ function weekArgs(dateStrs, leagueId) {
     return ["curl", "-fsS", "--max-time", "8", "--max-filesize", MAX_BYTES, apiUrlFor(L.sport, L.league) + "?dates=" + dateStrs[0] + "-" + dateStrs[6]]
 }
 function standingsUrlFor(sport, league) { return "https://site.api.espn.com/apis/v2/sports/" + sport + "/" + league + "/standings" }
+
+// Media URLs (team logos, athlete headshots) come from the response and are
+// loaded by QML Image elements without user action. Only https on ESPN's own
+// CDN is ever legitimate, so anything else — a hostile or compromised payload
+// pointing at an arbitrary URL — loads nothing instead of beaconing.
+function safeMedia(u) {
+    u = String(u || "")
+    return /^https:\/\/([a-z0-9-]+\.)*espncdn\.com\//.test(u) ? u : ""
+}
 
 // Convert the v2 league-standings payload (children = conferences) into the same
 // group shape the summary standings use, so panels render both identically.
