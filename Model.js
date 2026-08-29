@@ -265,6 +265,26 @@ function liveBoardNeedsFetch(leagueId, todayYmd, maxAgeMs) {
     return !(e && new Date().getTime() - e.at < maxAgeMs)
 }
 
+// --- Shared notification claims ---
+// Exact-once sends process-wide: every panel's requestNotification claims its
+// key here first. All panels share this one engine, so within a poll cycle
+// exactly one instance wins. 45s TTL absorbs poll stagger between panels, so
+// a genuinely new recurrence of the same key can notify again; entries are
+// pruned after 24h to stay bounded. No claim file exists — nothing on disk.
+var notifClaims = {}
+function claimNotification(key, now) {
+    for (var k in notifClaims) if (now - notifClaims[k] >= 86400000) delete notifClaims[k]
+    if (notifClaims[key] && now - notifClaims[key] < 45000) return false
+    notifClaims[key] = now
+    return true
+}
+// Kickoff reminders already requested/sent, keyed by game id (shared so
+// another panel's earlier reminder suppresses re-requests at later minutes).
+// Cleared in place (no rebinding) so external Model.kickoffNotified reads
+// always see the live object.
+var kickoffNotified = {}
+function resetKickoffMarks() { for (var k in kickoffNotified) delete kickoffNotified[k] }
+
 // --- Shared favorites state ---
 // All per-screen panels import this library into the SAME engine, so favorites
 // live here process-wide: every toggle or startup restore lands through
