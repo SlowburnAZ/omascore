@@ -81,19 +81,13 @@ Panel {
   }
   property string lastError: ""
 
+  // One-time migration reads (dd, bounded, no-follow) of the pre-dconf state
+  // files; nothing is ever written to these paths, and favorites now live in
+  // dconf (see saveFavorites).
   readonly property string storePath: Quickshell.env("HOME") + "/.local/state/omarchy/omascore-favorites.json"
   readonly property string oldStorePath: Quickshell.env("HOME") + "/.local/state/omarchy/nfl-favorites.json"
-  readonly property string backupPath: Quickshell.env("HOME") + "/.config/omarchy/omascore-favorites.json"
-  // State-dir files are user-replaceable (omarchy-plugin-marketplace#2934 re-review).
-  // All claim/cache reads and writes go through the dd-based helpers below: reads
-  // open once with O_NOFOLLOW|O_NONBLOCK and are byte-capped on that same open, so
-  // a post-check path replacement cannot substitute another object and no probe or
-  // TOCTOU window exists; writes stage into an O_EXCL|O_NOFOLLOW temp (fsync'd) and
-  // publish via mv (rename), which replaces a planted symlink instead of following it.
-  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy"
-  readonly property string claimPath: root.stateDir + "/omascore-notifications.json"
-  property var memClaims: ({})          // authoritative claim map; merged with the file on every claim
-  function cachePathFor(leagueId) { return root.stateDir + "/omascore-" + leagueId + "-cache.json" }
+  property var memClaims: ({})          // exact-once notification claims (one quickshell process, all panels)
+  property var sessionCache: ({})       // per-league scoreboard paint cache, session-only
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
 
@@ -153,26 +147,31 @@ Panel {
 
   function isFav(abbr) { return Model.isFav(root.favorites, abbr, root.currentLeagueId) }
   function loadFavorites(raw) { root.favorites = Model.parseFavorites(raw) }
-  function saveFavorites() {
-    var txt = JSON.stringify(root.favorites, null, 2) + "\n"
-    store.setText(txt)
-    // ponytail: mirror to config backup so disable/remove/re-add survives state GC
-    try { backupStore.setText(txt) } catch(e) {}
-  }
-  function restoreFromBackupIfNeeded() {
-    if (Object.keys(root.favorites).length !== 0) return
-    try {
-      var bt = backupStore.text()
-      if (bt && bt.trim()) {
-        var parsed = Model.parseFavorites(bt)
-        if (Object.keys(parsed).length !== 0) {
-          root.favorites = parsed
-          store.setText(bt)
-          root.games = root.sorted(root.games)
-          root.recount()
-        }
-      }
-    } catch(e) {}
+  function applyFavorites() { root.games = root.sorted(root.games); root.recount() }
+  function saveFavorites() { dconfWrite(Model.DCONF_FAVORITES, JSON.stringify(root.favorites)) }
+  // Restore chain: dconf -> legacy state json -> legacy flat array, migrating
+  // whatever is found into dconf. The json reads go through the bounded no-follow
+  // dd helper; after this runs the plugin never opens those files again.
+  property bool favoritesRestored: false
+  function restoreFavorites() {
+    if (root.favoritesRestored) return
+    root.favoritesRestored = true
+    dconfRead(Model.DCONF_FAVORITES, function(raw) {
+      root.loadFavorites(Model.dconfUnescape(raw))
+      if (Object.keys(root.favorites).length !== 0) { root.applyFavorites(); return }
+      root.boundedRead(root.storePath, Model.MAX_TEXT, function(raw2) {
+        root.loadFavorites(raw2)
+        if (Object.keys(root.favorites).length !== 0) { root.saveFavorites(); root.applyFavorites(); return }
+        root.boundedRead(root.oldStorePath, Model.MAX_TEXT, function(raw3) {
+          try {
+            var arr = JSON.parse(raw3 || "null")
+            if (Array.isArray(arr) && arr.length) root.favorites = { nfl: arr }
+          } catch (e) {}
+          if (Object.keys(root.favorites).length !== 0) root.saveFavorites()
+          root.applyFavorites()
+        })
+      })
+    })
   }
   function toggleFav(abbr) {
     root.favorites = Model.toggleFavMap(root.favorites, root.currentLeagueId, abbr)
@@ -237,14 +236,11 @@ Panel {
   function refreshSelected() {
     var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
-    root.boundedRead(root.cachePathFor(root.currentLeagueId), Model.MAX_TEXT, root.cacheReadDone)
+    // session cache: paint the last payload for this league while the fresh fetch runs
+    if (root.games.length === 0 && root.sessionCache[root.currentLeagueId]) root.parseGames(root.sessionCache[root.currentLeagueId], true)
     var args = Model.fetchArgs(ds, root.currentLeagueId)
     if (!args) return
     fetchProc.running = false; fetchProc.command = args; fetchProc.running = true
-  }
-  function cacheReadDone(raw) {
-    var t = root.gated(raw)
-    if (t !== null && root.games.length === 0) root.parseGames(t, true)
   }
   function showDetail(game) {
     if (!game || !Model.validEventId(game.id)) return
@@ -351,7 +347,8 @@ Panel {
   // descriptor and nothing can be loaded past the cap. Symlinks fail with ELOOP,
   // FIFOs return immediately (nonblock), a timeout(1) belt bounds anything that
   // never yields EOF, and oversized/device files are truncated at the cap.
-  // Failure or missing file yields "".
+  // Failure or missing file yields "". Used only for the one-time legacy
+  // favorites migration reads; favorites themselves live in dconf (below).
   readonly property int stateBs: 65536
   property var readQueue: []
   property var curRead: null
@@ -387,125 +384,70 @@ Panel {
     }
     stderr: StdioCollector {}   // keep dd failure chatter out of the journal
   }
-  // Writes: the payload is staged by dd into a same-directory O_EXCL|O_NOFOLLOW
-  // temp (fsync'd) and then published by mv (rename), which is atomic and
-  // replaces anything planted at the target — including symlinks — instead of
-  // following it. Any dd/mv failure leaves the target untouched (fail closed).
-  // validate: JSON round-trip before I/O (claims are cheap; cache payloads were
-  // already parsed upstream, so they skip the re-parse).
-  property var writeQueue: []
-  property var curWrite: null
-  function safePublish(path, str, cb, validate) {
-    if (!path) { if (cb) cb(false); return }
-    if (validate) { try { JSON.parse(str) } catch (e) { if (cb) cb(false); return } }
-    root.writeQueue.push({ path: path, str: str, cb: cb })
-    root.pumpWrite()
-  }
-  function pumpWrite() {
-    if (writeProc.running || publishProc.running || !root.writeQueue.length) return
-    var job = root.writeQueue.shift()
-    job.tmp = job.path + "." + new Date().getTime() + "." + Math.floor(Math.random() * 1000000) + ".tmp"
-    job.step = "dd"
-    root.curWrite = job
-    writeProc.stdinEnabled = true
-    writeProc.running = false
-    writeProc.command = ["/usr/bin/dd", "of=" + job.tmp, "oflag=nofollow", "conv=excl,fsync", "status=none"]
-    writeProc.running = true
-  }
-  function finishWrite(ok) {
-    var job = root.curWrite
-    root.curWrite = null
-    if (job && job.cb) job.cb(ok)
-    root.pumpWrite()
+  // Favorites state lives in dconf: fixed-argv `dconf read/write`, no shell,
+  // no state-file paths. Writes are serialized through dconf-service, which
+  // also serializes concurrent writers from other panel instances.
+  property var dconfQueue: []
+  property var curDconf: null
+  function dconfRead(key, cb) { root.dconfQueue.push({ key: key, cb: cb, write: null }); root.pumpDconf() }
+  function dconfWrite(key, str, cb) { root.dconfQueue.push({ key: key, cb: cb, write: str }); root.pumpDconf() }
+  function pumpDconf() {
+    if (dconfProc.running || !root.dconfQueue.length) return
+    var job = root.dconfQueue.shift()
+    root.curDconf = job
+    dconfProc.running = false
+    dconfProc.command = job.write !== null
+      ? ["/usr/bin/dconf", "write", job.key, Model.dconfEscape(job.write)]
+      : ["/usr/bin/dconf", "read", job.key]
+    dconfProc.running = true
   }
   Process {
-    id: writeProc
+    id: dconfProc
     command: []
-    onStarted: {
-      if (!root.curWrite || root.curWrite.step !== "dd") return
-      write(root.curWrite.str)
-      stdinEnabled = false   // EOF for dd; the channel reopens on the next run
-    }
+    stdout: StdioCollector { id: dconfOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var job = root.curWrite
+      var job = root.curDconf
+      root.curDconf = null
       if (!job) return
-      if (job.step === "dd") {
-        if (exitCode === 0) {
-          job.step = "mv"
-          publishProc.running = false
-          publishProc.command = ["/usr/bin/mv", "-f", job.tmp, job.path]
-          publishProc.running = true
-        } else {                 // stage failed (excl/nofollow/fsync): target untouched
-          job.step = "rm"
-          running = false
-          command = ["/usr/bin/rm", "-f", job.tmp]
-          running = true
-        }
-      } else root.finishWrite(false)   // rm finished
+      if (job.write !== null) {
+        if (exitCode !== 0) console.log("OmaScore: dconf write failed; favorites session-only this run")
+        if (job.cb) job.cb(exitCode === 0)
+      } else {
+        job.cb(exitCode === 0 ? String(dconfOut.text) : "")
+      }
     }
   }
+  // Hot-reload: another panel instance starring a team lands here too.
   Process {
-    id: publishProc
-    command: []
-    onExited: function(exitCode) {
-      var job = root.curWrite
-      if (job && exitCode !== 0) {   // publish failed: target untouched, clean the stage
-        job.step = "rm"
-        writeProc.running = false
-        writeProc.command = ["/usr/bin/rm", "-f", job.tmp]
-        writeProc.running = true
-        return
+    id: dconfWatch
+    command: ["/usr/bin/dconf", "watch", "/net/slowburnaz/omascore"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        if (String(line).trim() === Model.DCONF_FAVORITES) root.reloadFavoritesFromDconf()
       }
-      root.finishWrite(exitCode === 0)
     }
+  }
+  function reloadFavoritesFromDconf() {
+    dconfRead(Model.DCONF_FAVORITES, function(raw) {
+      var parsed = Model.parseFavorites(Model.dconfUnescape(raw))
+      if (JSON.stringify(parsed) === JSON.stringify(root.favorites)) return
+      root.favorites = parsed
+      root.applyFavorites()
+    })
   }
   // Cross-instance notification dedup. Every bar hosts its own Panel (one per
   // screen), each polling ESPN independently, so a score transition fires once
-  // per instance. All instances share one quickshell process/event loop, so the
-  // decision on the merged map is race-free within the process; the file is
-  // re-read (bounded, no-follow) before every claim so other instances' claims
-  // are honored. The read → decide → publish sequence is no longer event-loop
-  // atomic (dd reads are async), so two instances landing their whole claim
-  // sequence inside the same few-ms window could still double-send; the 45s
-  // TTL covers ordinary poll stagger.
-  // The claim file is user-replaceable, so the load is bounded:
-  // Model.sanitizeClaims discards oversized/depth-bombed/flooded content,
-  // boundedRead caps the decode at MAX_CLAIM_TEXT on a no-follow open, and
-  // planted symlinks/FIFOs fail the read instead of being followed.
-  property var claimQueue: []
-  property bool claimBusy: false
-  property var curClaim: null
+  // per instance. All panels live in ONE quickshell process, so this in-memory
+  // claim map is exact-once there; entries expire after 45s so a genuinely new
+  // recurrence of the same key can notify again, and dead entries are pruned
+  // after 24h. No claim file exists, so there is nothing to harden on disk.
   function requestNotification(key, cmd, kickoffId) {
-    root.claimQueue.push({ key: key, cmd: cmd, kickoffId: kickoffId || "" })
-    root.pumpClaims()
-  }
-  function pumpClaims() {
-    if (root.claimBusy || !root.claimQueue.length) return
-    root.claimBusy = true
-    root.curClaim = root.claimQueue.shift()
-    root.boundedRead(root.claimPath, Model.MAX_CLAIM_TEXT, root.claimReadDone)
-  }
-  function claimReadDone(raw) {
-    var job = root.curClaim
     var now = new Date().getTime()
-    var claims = root.memClaims
-    for (var k in claims) if (now - claims[k] >= 86400000) delete claims[k]   // dead claims
-    var fileClaims = Model.sanitizeClaims(raw, now)
-    for (var k2 in fileClaims) claims[k2] = fileClaims[k2]
-    if (claims[job.key] && now - claims[job.key] < 45000) { root.finishClaim(false); return }
-    claims[job.key] = now
-    root.safePublish(root.claimPath, JSON.stringify(claims), null, true)
-    root.finishClaim(true)
-  }
-  function finishClaim(ok) {
-    var job = root.curClaim
-    root.curClaim = null
-    root.claimBusy = false
-    if (ok) {
-      if (job.kickoffId) root.kickoffNotified[job.kickoffId] = true
-      if (!notifProc.running) { notifProc.command = job.cmd; notifProc.running = true }
-    }
-    root.pumpClaims()
+    for (var k in root.memClaims) if (now - root.memClaims[k] >= 86400000) delete root.memClaims[k]
+    if (root.memClaims[key] && now - root.memClaims[key] < 45000) return
+    root.memClaims[key] = now
+    if (kickoffId) root.kickoffNotified[kickoffId] = true
+    if (!notifProc.running) { notifProc.command = cmd; notifProc.running = true }
   }
   function checkScoreNotifications(games) {
     var next = {}
@@ -597,80 +539,6 @@ Panel {
     return ""
   }
 
-  FileView {
-    id: store
-    path: root.storePath
-    watchChanges: true
-    atomicWrites: true
-    printErrors: false
-    onLoaded: {
-      root.loadFavorites(text())
-      if (Object.keys(root.favorites).length == 0) {
-        // try backup before legacy (only when state empty)
-        root.restoreFromBackupIfNeeded()
-        if (Object.keys(root.favorites).length == 0) oldStore.reload()
-      }
-      root.games = root.sorted(root.games)
-      root.recount()
-    }
-    onLoadFailed: {
-      root.loadFavorites("{}")
-      root.restoreFromBackupIfNeeded()
-      if (Object.keys(root.favorites).length == 0) oldStore.reload()
-    }
-    onFileChanged: reload()
-  }
-  FileView {
-    id: backupStore
-    path: root.backupPath
-    watchChanges: false
-    atomicWrites: true
-    printErrors: false
-    blockLoading: true
-    onLoaded: {
-      // only authoritative when state is empty (e.g. after remove where state was GC'd)
-      if (Object.keys(root.favorites).length === 0) {
-        var bt = text() || ""
-        if (bt.trim()) {
-          try {
-            var parsed = Model.parseFavorites(bt)
-            if (Object.keys(parsed).length !== 0) {
-              root.favorites = parsed
-              store.setText(bt)
-              root.games = root.sorted(root.games)
-              root.recount()
-            }
-          } catch(e) {}
-        }
-      }
-    }
-    onLoadFailed: { /* first run: no backup yet */ }
-  }
-  FileView {
-    id: oldStore
-    path: root.oldStorePath
-    watchChanges: false
-    atomicWrites: false
-    printErrors: false
-    blockLoading: true
-    onLoaded: {
-      var txt = text() || ""
-      if (!txt.trim()) return
-      if (Object.keys(root.favorites).length != 0) return
-      // also abort if state already has content on disk (race: store loaded but favorites not yet set)
-      try { var st = store.text(); if (st && st.trim() && st.trim() !== "{}") return } catch(e) {}
-      try { var bt = backupStore.text(); if (bt && bt.trim() && bt.trim() !== "{}") return } catch(e) {}
-      try {
-        var arr = JSON.parse(txt)
-        if (Array.isArray(arr) && arr.length) {
-          root.favorites = { nfl: arr }
-          root.saveFavorites()
-          root.games = root.sorted(root.games)
-          root.recount()
-        }
-      } catch(e) {}
-    }
-  }
   Process {
     id: fetchProc
     command: []
@@ -680,8 +548,8 @@ Panel {
         var t = root.gated(text)
         if (t === null) return
         root.parseGames(t)
-        // persist as the league cache (replaces the old `tee` in the shell pipeline)
-        if (t.trim()) root.safePublish(root.cachePathFor(root.currentLeagueId), t, null, false)
+        // session paint cache (memory-only; nothing hits disk)
+        if (t.trim()) root.sessionCache[root.currentLeagueId] = t
       }
     }
   }
@@ -764,7 +632,7 @@ Panel {
     root.leagueRestored = true
     if (saved !== root.currentLeagueId && Model.leagueFor(saved).id === saved) root.setLeague(saved)
   }
-  function initForCurrent() { root.restoreLastLeague(); root.initWeek() }
+  function initForCurrent() { root.restoreFavorites(); root.restoreLastLeague(); root.initWeek() }
   Component.onCompleted: Qt.callLater(root.initForCurrent)
 
   onOpenedChanged: if (root.opened) {

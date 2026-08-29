@@ -35,7 +35,7 @@ Each side wears its real team color, lifted just enough to stay readable on the 
 
 **Small things that add up**
 
-- Reopens on your last league; scoreboard paints instantly from cache, even after a reboot
+- Reopens on your last league with your favorites pinned
 - Fully keyboard-driven panel: `↑/↓` to move, `Enter` to open, `Esc` steps back
 - Settings screen (gear icon): toggle notifications, odds, and hiding finished games
 - Scores flash accent in the panel the moment they change
