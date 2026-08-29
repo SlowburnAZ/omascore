@@ -405,9 +405,12 @@ Panel {
     }
   }
   // Hot-reload: another panel instance starring a team lands here too.
+  // Note: dconf watch on a subpath reports nothing (dconf 0.49), so watch /
+  // and filter — change traffic on the session bus is tiny.
   Process {
     id: dconfWatch
-    command: ["/usr/bin/dconf", "watch", "/net/slowburnaz/omascore"]
+    running: true
+    command: ["/usr/bin/dconf", "watch", "/"]
     stdout: SplitParser {
       onRead: function(line) {
         if (String(line).trim() === Model.DCONF_FAVORITES) root.reloadFavoritesFromDconf()
