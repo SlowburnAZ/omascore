@@ -14,3 +14,5 @@
 ```
 omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 ```
+
+*Data provided by ESPN · Not affiliated with or endorsed by ESPN · for personal, non-commercial use.*

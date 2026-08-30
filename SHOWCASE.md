@@ -40,4 +40,6 @@ Everything runs through the ESPN public API via `curl`. No keys, no accounts, no
 
 ---
 
+*Data provided by ESPN · Not affiliated with or endorsed by ESPN · for personal, non-commercial use.*
+
 *Omarchy shell plugin · MIT · [github.com/SlowburnAZ/omascore](https://github.com/SlowburnAZ/omascore)*
