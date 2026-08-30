@@ -62,6 +62,10 @@ omarchy bar move slowburnaz.omascore --section right
 - `curl` — all ESPN API calls run through it (preinstalled on Omarchy).
 - `dconf` — favorites persist through the desktop settings daemon (preinstalled on Omarchy).
 
+## Data & attribution
+
+Score data, logos, and imagery come from ESPN's public (undocumented) scoreboard API and CDN. OmaScore is an independent project — **not affiliated with, sponsored by, or endorsed by ESPN**. Data is for personal, non-commercial use and remains the property of ESPN. The API is unofficial and may change or become unavailable without notice; polling is deliberately lightweight and adaptive (25s when a favorite is live, backing off to 2 minutes otherwise).
+
 ## Debugging
 
 QML errors and plugin logs go to the systemd user journal:
