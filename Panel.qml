@@ -163,6 +163,11 @@ Panel {
   property var sessionCache: ({})       // per-league scoreboard paint cache, session-only
   readonly property string apiUrl: Model.apiUrl
   readonly property color urgentColor: root.bar ? root.bar.urgent : Color.urgent
+  // Panel-surface text color. The inherited barForeground tracks the bar's
+  // wallpaper-tuned color when the bar runs transparent (dark text over dark
+  // wallpaper), which vanishes on this panel's solid popup surface — the
+  // shell's own panels read bar.foreground (theme text) for that reason.
+  readonly property color fg: root.bar ? root.bar.foreground : Color.foreground
 
   property string currentLeagueId: Model.defaultLeagueId
   readonly property bool hideFinished: {
@@ -544,7 +549,7 @@ Panel {
     }
     root.prevScores = next
   }
-  function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.barForeground) }
+  function statusColor(state) { return Model.statusColor(state, root.urgentColor, root.fg) }
   // ESPN colors are 6-hex without "#" and often near-black; blend toward the theme
   // foreground until the hue passes 4.5:1 contrast on the actual panel surface, so
   // any team color stays legible (dark navy lifts, bright colors pass unchanged)
@@ -554,7 +559,7 @@ Panel {
     var c = Qt.rgba(parseInt(h.substring(0, 2), 16) / 255, parseInt(h.substring(2, 4), 16) / 255, parseInt(h.substring(4, 6), 16) / 255, 1)
     var bg = Color.popups.background
     for (var i = 0; i < 4 && contrastRatio(c, bg) < 4.5; i++)
-      c = Qt.rgba(c.r + (root.barForeground.r - c.r) * 0.35, c.g + (root.barForeground.g - c.g) * 0.35, c.b + (root.barForeground.b - c.b) * 0.35, 1)
+      c = Qt.rgba(c.r + (root.fg.r - c.r) * 0.35, c.g + (root.fg.g - c.g) * 0.35, c.b + (root.fg.b - c.b) * 0.35, 1)
     return c
   }
   function luminance(c) {
@@ -748,7 +753,7 @@ Panel {
               textFormat: Text.PlainText
               id: heroIcon
               text: "\uf091"
-              color: root.barForeground
+              color: root.fg
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.display
               anchors.left: parent.left
@@ -757,7 +762,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               text: "OmaScore"
-              color: root.barForeground
+              color: root.fg
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.title
               font.bold: true
@@ -773,7 +778,7 @@ Panel {
               anchors.rightMargin: -settingsButton.horizontalPadding
               anchors.verticalCenter: parent.verticalCenter
               iconText: "\uf013"
-              foreground: root.showSettings ? Color.accent : root.barForeground
+              foreground: root.showSettings ? Color.accent : root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: {
@@ -806,7 +811,7 @@ Panel {
                   radius: Style.space(14)
                   color: root.currentLeagueId == modelData.id ? Color.accent : "transparent"
                   border.width: root.currentLeagueId == modelData.id ? 0 : 1
-                  border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                  border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18)
                   Row {
                     id: row
                     anchors.centerIn: parent
@@ -816,7 +821,7 @@ Panel {
                       textFormat: Text.PlainText
                       id: leagueText
                       text: modelData.label
-                      color: root.currentLeagueId == modelData.id ? Color.background : root.barForeground
+                      color: root.currentLeagueId == modelData.id ? Color.background : root.fg
                       font.family: root.bar ? root.bar.fontFamily : Style.font.family
                       font.pixelSize: Style.font.caption
                       font.bold: root.currentLeagueId == modelData.id
@@ -824,7 +829,7 @@ Panel {
                     Text {
                       textFormat: Text.PlainText
                       text: root.isLeagueFav(modelData.id) ? "\u2605" : "\u2606"
-                      color: root.currentLeagueId == modelData.id ? Color.background : (root.isLeagueFav(modelData.id) ? Color.accent : root.barForeground)
+                      color: root.currentLeagueId == modelData.id ? Color.background : (root.isLeagueFav(modelData.id) ? Color.accent : root.fg)
                       opacity: root.isLeagueFav(modelData.id) ? 1 : 0.6
                       font.pixelSize: Style.font.caption
                       MouseArea {
@@ -849,7 +854,7 @@ Panel {
               Layout.preferredWidth: Style.space(28)
               Layout.preferredHeight: Style.space(28)
               iconText: "\u2039"
-              foreground: root.barForeground
+              foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.shiftWeek(-7)
@@ -864,7 +869,7 @@ Panel {
                 radius: Style.space(6)
                 color: root.selectedDay === index ? Color.accent : "transparent"
                 border.width: root.selectedDay === index ? 0 : 1
-                border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18)
                 clip: true
 
                 MouseArea {
@@ -880,7 +885,7 @@ Panel {
                     textFormat: Text.PlainText
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: root.dayLabels[index]
-                    color: root.selectedDay === index ? Color.background : root.barForeground
+                    color: root.selectedDay === index ? Color.background : root.fg
                     opacity: root.selectedDay === index ? 1 : 0.7
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
@@ -891,7 +896,7 @@ Panel {
                     textFormat: Text.PlainText
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: root.weekDates.length === 7 ? root.weekDates[index].getDate() : ""
-                    color: root.selectedDay === index ? Color.background : root.barForeground
+                    color: root.selectedDay === index ? Color.background : root.fg
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.bodySmall
                     font.bold: true
@@ -916,7 +921,7 @@ Panel {
                   height: 2
                   radius: 1
                   visible: index === root.todayIndex && root.selectedDay !== index
-                  color: root.barForeground
+                  color: root.fg
                   opacity: 0.55
                 }
               }
@@ -926,7 +931,7 @@ Panel {
               Layout.preferredWidth: Style.space(28)
               Layout.preferredHeight: Style.space(28)
               iconText: "\u203A"
-              foreground: root.barForeground
+              foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.shiftWeek(7)
@@ -938,7 +943,7 @@ Panel {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: root.weekLabelText
-            color: root.barForeground
+            color: root.fg
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
@@ -957,7 +962,7 @@ Panel {
               return root.trFn("No games %1 \u2014 try \u203A for next week", day)
             }
             visible: root.lastError !== "" && root.games.length === 0 && root.listVisible
-            color: root.lastError === "No games scheduled" ? root.barForeground : root.urgentColor
+            color: root.lastError === "No games scheduled" ? root.fg : root.urgentColor
             opacity: root.lastError === "No games scheduled" ? 0.6 : 1
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
@@ -984,9 +989,9 @@ Panel {
                     required property int index
                     width: parent.width
                     spacing: Style.space(8)
-                    Rectangle { width: Style.space(20); height: Style.space(20); radius: Style.space(10); color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.09) }
-                    Rectangle { width: parent.width - Style.space(64); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07) }
-                    Rectangle { width: Style.space(28); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.05) }
+                    Rectangle { width: Style.space(20); height: Style.space(20); radius: Style.space(10); color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.09) }
+                    Rectangle { width: parent.width - Style.space(64); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.07) }
+                    Rectangle { width: Style.space(28); height: Style.space(9); radius: Style.space(4); anchors.verticalCenter: parent.verticalCenter; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05) }
                   }
                 }
                 Rectangle {
@@ -1012,7 +1017,7 @@ Panel {
             horizontalAlignment: Text.AlignHCenter
             text: root.trFn("All games finished \u2014 unhide them in Settings")
             visible: root.games.length > 0 && root.shownGames.length === 0 && root.listVisible
-            color: root.barForeground
+            color: root.fg
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
@@ -1060,7 +1065,7 @@ Panel {
                   onFlashingChanged: if (flashing) flashExpire.restart()
                   visible: index === root.cursorIndex || flashing || color.a > 0 || (modelData && modelData.state === "in")
                   color: index === root.cursorIndex
-                    ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                    ? Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
                     : (flashing ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.28) : "transparent")
                   radius: Style.space(6)
                   Behavior on color { ColorAnimation { duration: 350 } }
@@ -1120,7 +1125,7 @@ Panel {
                 }
                 Button {
                   iconText: modelData && root.isFav(modelData.away.abbr) ? "\u2605" : "\u2606"
-                  foreground: modelData && root.isFav(modelData.away.abbr) ? Color.accent : root.barForeground
+                  foreground: modelData && root.isFav(modelData.away.abbr) ? Color.accent : root.fg
                   accent: Color.accent
                   fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
                   onClicked: if (modelData) root.toggleFav(modelData.away.abbr)
@@ -1129,7 +1134,7 @@ Panel {
                   textFormat: Text.PlainText
                   Layout.fillWidth: true
                   text: modelData ? modelData.away.abbr + "   " + modelData.away.name : ""
-                  color: root.barForeground
+                  color: root.fg
                   opacity: isFinal && homeLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
@@ -1141,7 +1146,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   text: modelData && modelData.away ? modelData.away.score || "-" : "-"
-                  color: modelData && root.leads(modelData, "away") ? Color.accent : root.barForeground
+                  color: modelData && root.leads(modelData, "away") ? Color.accent : root.fg
                   opacity: isFinal && homeLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
@@ -1177,7 +1182,7 @@ Panel {
                 }
                 Button {
                   iconText: modelData && root.isFav(modelData.home.abbr) ? "\u2605" : "\u2606"
-                  foreground: modelData && root.isFav(modelData.home.abbr) ? Color.accent : root.barForeground
+                  foreground: modelData && root.isFav(modelData.home.abbr) ? Color.accent : root.fg
                   accent: Color.accent
                   fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
                   onClicked: if (modelData) root.toggleFav(modelData.home.abbr)
@@ -1186,7 +1191,7 @@ Panel {
                   textFormat: Text.PlainText
                   Layout.fillWidth: true
                   text: modelData ? modelData.home.abbr + "   " + modelData.home.name : ""
-                  color: root.barForeground
+                  color: root.fg
                   opacity: isFinal && awayLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
@@ -1198,7 +1203,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   text: modelData && modelData.home ? modelData.home.score || "-" : "-"
-                  color: modelData && root.leads(modelData, "home") ? Color.accent : root.barForeground
+                  color: modelData && root.leads(modelData, "home") ? Color.accent : root.fg
                   opacity: isFinal && awayLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
@@ -1211,14 +1216,14 @@ Panel {
                 width: parent.width
                 horizontalAlignment: Text.AlignRight
                 text: root.gameStatus(modelData)
-                color: modelData ? root.statusColor(modelData.state) : root.barForeground
+                color: modelData ? root.statusColor(modelData.state) : root.fg
                 opacity: modelData && modelData.state === "in" ? 1.0 : 0.6
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
                 font.bold: modelData && modelData.state === "in"
               }
 
-              PanelSeparator { foreground: root.barForeground }
+              PanelSeparator { foreground: root.fg }
             }
           }
           Column {
@@ -1232,7 +1237,7 @@ Panel {
               Button {
                 iconText: "\u2039"
                 text: root.trFn("Back")
-                foreground: root.barForeground
+                foreground: root.fg
                 accent: Color.accent
                 fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
                 onClicked: root.showSettings = false
@@ -1241,7 +1246,7 @@ Panel {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: root.trFn("Settings")
-                color: root.barForeground
+                color: root.fg
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.subtitle
                 font.bold: true
@@ -1254,7 +1259,7 @@ Panel {
               label: root.trFn("Score notifications")
               description: root.trFn("Notify when a favorited team's score changes")
               checked: root.notifyEnabled
-              foreground: root.barForeground
+              foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.setSetting("notifications", !root.notifyEnabled)
@@ -1265,7 +1270,7 @@ Panel {
               label: root.trFn("Show pre-game odds")
               description: root.trFn("Spread and over/under on upcoming games")
               checked: root.showOdds
-              foreground: root.barForeground
+              foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.setSetting("showOdds", !root.showOdds)
@@ -1276,7 +1281,7 @@ Panel {
               label: root.trFn("Hide finished games")
               description: root.trFn("Hide games that have already ended")
               checked: root.hideFinished
-              foreground: root.barForeground
+              foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.setSetting("hideFinished", !root.hideFinished)
@@ -1293,7 +1298,7 @@ Panel {
                 { value: "pt", label: "Português" },
                 { value: "nl", label: "Nederlands" }
               ]
-              foreground: root.barForeground
+              foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onChanged: function(v) { root.setSetting("language", v) }
@@ -1311,7 +1316,7 @@ Panel {
               Button {
                 iconText: "\u2039"
                 text: root.trFn("Back")
-                foreground: root.barForeground
+                foreground: root.fg
                 accent: Color.accent
                 fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
                 onClicked: root.closeDetail()
@@ -1322,7 +1327,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   text: root.selectedGame ? root.selectedGame.away.abbr : ""
-                  color: root.selectedGame && (root.selectedGame.away.color || "") !== "" ? root.teamColor(root.selectedGame.away.color) : root.barForeground
+                  color: root.selectedGame && (root.selectedGame.away.color || "") !== "" ? root.teamColor(root.selectedGame.away.color) : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
@@ -1330,7 +1335,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   text: "@"
-                  color: root.barForeground
+                  color: root.fg
                   opacity: 0.5
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.subtitle
@@ -1339,7 +1344,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   text: root.selectedGame ? root.selectedGame.home.abbr : ""
-                  color: root.selectedGame && (root.selectedGame.home.color || "") !== "" ? root.teamColor(root.selectedGame.home.color) : root.barForeground
+                  color: root.selectedGame && (root.selectedGame.home.color || "") !== "" ? root.teamColor(root.selectedGame.home.color) : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
@@ -1384,7 +1389,7 @@ Panel {
                   textFormat: Text.PlainText
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.abbr : ""
-                  color: root.barForeground
+                  color: root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.bodySmall
                   font.bold: true
@@ -1395,7 +1400,7 @@ Panel {
                   Text {
                     textFormat: Text.PlainText
                     text: root.selectedGame && root.selectedGame.away ? root.selectedGame.away.score : ""
-                    color: root.detailFlashing || root.leads(root.selectedGame, "away") ? Color.accent : root.barForeground
+                    color: root.detailFlashing || root.leads(root.selectedGame, "away") ? Color.accent : root.fg
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
@@ -1404,7 +1409,7 @@ Panel {
                     textFormat: Text.PlainText
                     visible: root.selectedGame && root.selectedGame.away && root.selectedGame.away.record
                     text: root.selectedGame && root.selectedGame.away ? "(" + root.selectedGame.away.record + ")" : ""
-                    color: root.barForeground
+                    color: root.fg
                     opacity: 0.45
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
@@ -1415,7 +1420,7 @@ Panel {
                   textFormat: Text.PlainText
                   visible: root.detailTeams && root.detailTeams.away && root.detailTeams.away.name
                   text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.name : ""
-                  color: root.barForeground
+                  color: root.fg
                   opacity: 0.45
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -1431,7 +1436,7 @@ Panel {
                 Layout.fillHeight: true
                 Layout.preferredHeight: Style.space(56)
                 Layout.alignment: Qt.AlignVCenter
-                color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.12)
+                color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
               }
               Column {
                 Layout.fillWidth: true
@@ -1458,7 +1463,7 @@ Panel {
                   textFormat: Text.PlainText
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.abbr : ""
-                  color: root.barForeground
+                  color: root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.bodySmall
                   font.bold: true
@@ -1469,7 +1474,7 @@ Panel {
                   Text {
                     textFormat: Text.PlainText
                     text: root.selectedGame && root.selectedGame.home ? root.selectedGame.home.score : ""
-                    color: root.detailFlashing || root.leads(root.selectedGame, "home") ? Color.accent : root.barForeground
+                    color: root.detailFlashing || root.leads(root.selectedGame, "home") ? Color.accent : root.fg
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
@@ -1478,7 +1483,7 @@ Panel {
                     textFormat: Text.PlainText
                     visible: root.selectedGame && root.selectedGame.home && root.selectedGame.home.record
                     text: root.selectedGame && root.selectedGame.home ? "(" + root.selectedGame.home.record + ")" : ""
-                    color: root.barForeground
+                    color: root.fg
                     opacity: 0.45
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
@@ -1489,7 +1494,7 @@ Panel {
                   textFormat: Text.PlainText
                   visible: root.detailTeams && root.detailTeams.home && root.detailTeams.home.name
                   text: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.name : ""
-                  color: root.barForeground
+                  color: root.fg
                   opacity: 0.45
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -1508,7 +1513,7 @@ Panel {
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
               text: root.detailTeams ? (root.detailTeams.venue + (root.detailTeams.addr ? " – " + root.detailTeams.addr : "") + (root.detailTeams.status ? " · " + root.detailTeams.status : "")) : ""
-              color: root.barForeground
+              color: root.fg
               opacity: 0.5
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
@@ -1525,7 +1530,7 @@ Panel {
               font.pixelSize: Style.font.caption
               font.bold: true
             }
-            PanelSeparator { foreground: root.barForeground; visible: (root.detailStats && root.detailStats.length > 0) || (root.detailPlayers && root.detailPlayers.length > 0) }
+            PanelSeparator { foreground: root.fg; visible: (root.detailStats && root.detailStats.length > 0) || (root.detailPlayers && root.detailPlayers.length > 0) }
 
             RowLayout {
               width: parent.width
@@ -1537,12 +1542,12 @@ Panel {
                 radius: Style.space(6)
                 color: root.detailTab === 0 ? Color.accent : "transparent"
                 border.width: root.detailTab === 0 ? 0 : 1
-                border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18)
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
                   text: root.trFn("Overall")
-                  color: root.detailTab === 0 ? Color.background : root.barForeground
+                  color: root.detailTab === 0 ? Color.background : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
                   font.bold: root.detailTab === 0
@@ -1555,12 +1560,12 @@ Panel {
                 radius: Style.space(6)
                 color: root.detailTab === 1 ? Color.accent : "transparent"
                 border.width: root.detailTab === 1 ? 0 : 1
-                border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18)
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
                   text: root.trFn("Players")
-                  color: root.detailTab === 1 ? Color.background : root.barForeground
+                  color: root.detailTab === 1 ? Color.background : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
                   font.bold: root.detailTab === 1
@@ -1573,12 +1578,12 @@ Panel {
                 radius: Style.space(6)
                 color: root.detailTab === 2 ? Color.accent : "transparent"
                 border.width: root.detailTab === 2 ? 0 : 1
-                border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18)
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
                   text: root.trFn("Plays")
-                  color: root.detailTab === 2 ? Color.background : root.barForeground
+                  color: root.detailTab === 2 ? Color.background : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
                   font.bold: root.detailTab === 2
@@ -1591,12 +1596,12 @@ Panel {
                 radius: Style.space(6)
                 color: root.detailTab === 3 ? Color.accent : "transparent"
                 border.width: root.detailTab === 3 ? 0 : 1
-                border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.18)
+                border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18)
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
                   text: root.trFn("Insights")
-                  color: root.detailTab === 3 ? Color.background : root.barForeground
+                  color: root.detailTab === 3 ? Color.background : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
                   font.bold: root.detailTab === 3
@@ -1632,7 +1637,7 @@ Panel {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     text: root.trFn("Loading stats\u2026")
-                    color: root.barForeground
+                    color: root.fg
                     opacity: 0.6
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.bodySmall
@@ -1652,7 +1657,7 @@ Panel {
             Button {
               visible: root.detailStale
               text: root.trFn("Retry")
-              foreground: root.barForeground
+              foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.loadDetail()
@@ -1677,11 +1682,11 @@ Panel {
                     RowLayout {
                       width: parent.width
                       spacing: Style.space(8)
-                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
+                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : root.fg; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                       Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: ""; }
-                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : root.barForeground; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
+                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : root.fg; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                     }
-                    Rectangle { width: parent.width; height: 1; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08) }
+                    Rectangle { width: parent.width; height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08) }
                     Repeater {
                       model: root.detailStats
                       delegate: Rectangle {
@@ -1694,7 +1699,7 @@ Panel {
                         readonly property color homeCol: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : Color.accent
                         width: parent.width
                         height: row.implicitHeight + Style.space(4)
-                        color: index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent"
+                        color: index % 2 === 1 ? Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.04) : "transparent"
                         radius: 2
                         // diverging bars: grow outward from the center divider, length = share of the stat
                         Rectangle {
@@ -1723,9 +1728,9 @@ Panel {
                           anchors.leftMargin: Style.space(4)
                           anchors.rightMargin: Style.space(4)
                           spacing: Style.space(8)
-                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: numA > numH ? awayCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: root.trFn(modelData.label); color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
-                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: numH > numA ? homeCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: numA > numH ? awayCol : root.fg; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: root.trFn(modelData.label); color: root.fg; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
+                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: numH > numA ? homeCol : root.fg; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                         }
                       }
                     }
@@ -1736,7 +1741,7 @@ Panel {
                     horizontalAlignment: Text.AlignHCenter
                     visible: !root.detailStats || root.detailStats.length === 0
                     text: root.trFn("No stats available")
-                    color: root.barForeground
+                    color: root.fg
                     opacity: 0.5
                     font.pixelSize: Style.font.bodySmall
                   }
@@ -1759,7 +1764,7 @@ Repeater {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     text: root.titleize(groupData.name || groupData.displayName || "")
-                    color: root.barForeground
+                    color: root.fg
                     opacity: 0.9
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
@@ -1785,7 +1790,7 @@ Repeater {
                           Rectangle {
                             width: Style.space(110)
                             height: Style.space(20)
-                            color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07)
+                            color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.07)
                             radius: 2
                             Text {
                               textFormat: Text.PlainText
@@ -1793,7 +1798,7 @@ Repeater {
                               text: root.trFn("Player")
                               font.bold: true
                               font.pixelSize: Style.font.caption
-                              color: root.barForeground
+                              color: root.fg
                               opacity: 0.8
                             }
                           }
@@ -1807,7 +1812,7 @@ Repeater {
                               height: Style.space(20)
                               verticalAlignment: Text.AlignVCenter
                               text: athleteData.athlete ? (athleteData.athlete.shortName || athleteData.athlete.displayName) : ""
-                              color: root.barForeground
+                              color: root.fg
                               font.family: root.bar ? root.bar.fontFamily : Style.font.family
                               font.pixelSize: Style.font.caption
                               elide: Text.ElideRight
@@ -1838,7 +1843,7 @@ Repeater {
                                   text: modelData
                                   font.bold: true
                                   font.pixelSize: Style.font.caption
-                                  color: root.barForeground
+                                  color: root.fg
                                   opacity: 0.7
                                   horizontalAlignment: Text.AlignHCenter
                                 }
@@ -1860,7 +1865,7 @@ Repeater {
                                     text: modelData
                                     font.family: "Monospace"
                                     font.pixelSize: Style.font.caption
-                                    color: root.barForeground
+                                    color: root.fg
                                     horizontalAlignment: Text.AlignHCenter
                                   }
                                 }
@@ -1874,7 +1879,7 @@ Repeater {
                       width: 1
                       Layout.fillHeight: true
                       Layout.alignment: Qt.AlignVCenter
-                      color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.15)
+                      color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.15)
                     }
                     // Home side
                     Column {
@@ -1892,7 +1897,7 @@ Repeater {
                           Rectangle {
                             width: Style.space(110)
                             height: Style.space(20)
-                            color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.07)
+                            color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.07)
                             radius: 2
                             Text {
                               textFormat: Text.PlainText
@@ -1900,7 +1905,7 @@ Repeater {
                               text: root.trFn("Player")
                               font.bold: true
                               font.pixelSize: Style.font.caption
-                              color: root.barForeground
+                              color: root.fg
                               opacity: 0.8
                             }
                           }
@@ -1914,7 +1919,7 @@ Repeater {
                               height: Style.space(20)
                               verticalAlignment: Text.AlignVCenter
                               text: athleteData.athlete ? (athleteData.athlete.shortName || athleteData.athlete.displayName) : ""
-                              color: root.barForeground
+                              color: root.fg
                               font.family: root.bar ? root.bar.fontFamily : Style.font.family
                               font.pixelSize: Style.font.caption
                               elide: Text.ElideRight
@@ -1945,7 +1950,7 @@ Repeater {
                                   text: modelData
                                   font.bold: true
                                   font.pixelSize: Style.font.caption
-                                  color: root.barForeground
+                                  color: root.fg
                                   opacity: 0.7
                                   horizontalAlignment: Text.AlignHCenter
                                 }
@@ -1967,7 +1972,7 @@ Repeater {
                                     text: modelData
                                     font.family: "Monospace"
                                     font.pixelSize: Style.font.caption
-                                    color: root.barForeground
+                                    color: root.fg
                                     horizontalAlignment: Text.AlignHCenter
                                   }
                                 }
@@ -1986,7 +1991,7 @@ Repeater {
                 horizontalAlignment: Text.AlignHCenter
                 visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
                   text: root.trFn("No player stats available")
-                color: root.barForeground
+                color: root.fg
                 opacity: 0.5
                 font.pixelSize: Style.font.bodySmall
               }
@@ -2002,7 +2007,7 @@ Repeater {
                   horizontalAlignment: Text.AlignHCenter
                   visible: (!root.detailDrives || root.detailDrives.length === 0) && (!root.detailPlays || root.detailPlays.length === 0)
                   text: root.trFn("No plays available")
-                  color: root.barForeground
+                  color: root.fg
                   opacity: 0.5
                   font.pixelSize: Style.font.caption
                 }
@@ -2023,7 +2028,7 @@ Repeater {
                         Text {
                           textFormat: Text.PlainText
                           text: modelData.team ? (modelData.team.abbreviation || modelData.team.displayName) : ""
-                          color: root.barForeground
+                          color: root.fg
                           font.pixelSize: Style.font.caption
                           font.bold: true
                         }
@@ -2031,7 +2036,7 @@ Repeater {
                           textFormat: Text.PlainText
                           Layout.fillWidth: true
                           text: (modelData.description || "") + (modelData.displayResult ? " \u00b7 " + modelData.displayResult : (modelData.result ? " \u00b7 " + modelData.result : ""))
-                          color: root.barForeground
+                          color: root.fg
                           opacity: 0.55
                           font.pixelSize: Style.font.caption
                           elide: Text.ElideRight
@@ -2040,14 +2045,14 @@ Repeater {
                           Layout.preferredWidth: resultText.implicitWidth + Style.space(8)
                           height: Style.space(16)
                           radius: 3
-                          color: modelData.isScore ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15) : Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                          color: modelData.isScore ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15) : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
                           visible: modelData.displayResult || modelData.result || modelData.shortDisplayResult
                           Text {
                             textFormat: Text.PlainText
                             id: resultText
                             anchors.centerIn: parent
                             text: modelData.displayResult || modelData.shortDisplayResult || modelData.result || ""
-                            color: modelData.isScore ? Color.accent : root.barForeground
+                            color: modelData.isScore ? Color.accent : root.fg
                             opacity: modelData.isScore ? 1 : 0.7
                             font.pixelSize: Style.font.caption
                             font.bold: modelData.isScore
@@ -2078,14 +2083,14 @@ Repeater {
                               Layout.alignment: Qt.AlignTop
                               height: Style.space(16)
                               radius: 3
-                              color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                              color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
                               visible: root.playChipText(modelData) !== ""
                               Text {
                                 textFormat: Text.PlainText
                                 id: chipText
                                 anchors.centerIn: parent
                                 text: root.playChipText(modelData)
-                                color: root.barForeground
+                                color: root.fg
                                 opacity: 0.7
                                 font.pixelSize: Style.font.caption
                                 font.family: "Monospace"
@@ -2095,7 +2100,7 @@ Repeater {
                               textFormat: Text.PlainText
                               Layout.fillWidth: true
                               text: modelData.text || modelData.description || ""
-                              color: modelData.scoringPlay ? Color.accent : root.barForeground
+                              color: modelData.scoringPlay ? Color.accent : root.fg
                               font.pixelSize: Style.font.caption
                               wrapMode: Text.WordWrap
                               opacity: modelData.scoringPlay ? 1 : 0.85
@@ -2136,14 +2141,14 @@ Repeater {
                           Layout.alignment: Qt.AlignTop
                           height: Style.space(16)
                           radius: 3
-                          color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                          color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
                           visible: root.playChipText(modelData) !== ""
                           Text {
                             textFormat: Text.PlainText
                             id: chipText
                             anchors.centerIn: parent
                             text: root.playChipText(modelData)
-                            color: root.barForeground
+                            color: root.fg
                             opacity: 0.7
                             font.pixelSize: Style.font.caption
                             font.family: "Monospace"
@@ -2153,7 +2158,7 @@ Repeater {
                           textFormat: Text.PlainText
                           Layout.fillWidth: true
                           text: modelData.text || modelData.description || modelData.shortText || ""
-                          color: modelData.scoringPlay ? Color.accent : root.barForeground
+                          color: modelData.scoringPlay ? Color.accent : root.fg
                           font.pixelSize: Style.font.caption
                           wrapMode: Text.WordWrap
                           opacity: modelData.scoringPlay ? 1 : 0.85
@@ -2181,7 +2186,7 @@ Repeater {
                   width: parent.width
                   spacing: Style.space(6)
                   visible: root.detailLeaders && root.detailLeaders.length > 0
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Leaders"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Leaders"); color: root.fg; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailLeaders
                     delegate: Column {
@@ -2192,7 +2197,7 @@ Repeater {
                         width: parent.width
                         spacing: Style.space(8)
                         Rectangle { width: Style.space(24); height: Style.space(24); radius: 12; clip: true; color: "transparent"; visible: modelData.team && modelData.team.logo; Image { anchors.fill: parent; source: Model.safeMedia(modelData.team.logo); fillMode: Image.PreserveAspectFit; asynchronous: true; cache: true } }
-                        Text { textFormat: Text.PlainText; text: modelData.team ? (modelData.team.abbreviation || modelData.team.displayName) : ""; color: root.barForeground; opacity: 0.6; font.pixelSize: Style.font.caption; font.bold: true; Layout.fillWidth: true }
+                        Text { textFormat: Text.PlainText; text: modelData.team ? (modelData.team.abbreviation || modelData.team.displayName) : ""; color: root.fg; opacity: 0.6; font.pixelSize: Style.font.caption; font.bold: true; Layout.fillWidth: true }
                       }
                       Repeater {
                         model: modelData.leaders || []
@@ -2202,7 +2207,7 @@ Repeater {
                           width: parent.width
                           spacing: Style.space(8)
                           Rectangle {
-                            Layout.preferredWidth: Style.space(28); Layout.preferredHeight: Style.space(28); radius: 14; clip: true; color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.08)
+                            Layout.preferredWidth: Style.space(28); Layout.preferredHeight: Style.space(28); radius: 14; clip: true; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
                             Image {
                               anchors.fill: parent
                               source: Model.safeMedia(leader && leader.athlete && leader.athlete.headshot ? leader.athlete.headshot.href : "")
@@ -2213,8 +2218,8 @@ Repeater {
                           Column {
                             Layout.fillWidth: true
                             spacing: 1
-                            Text { textFormat: Text.PlainText; text: leader && leader.athlete ? (leader.athlete.displayName || leader.athlete.shortName) : ""; color: root.barForeground; font.pixelSize: Style.font.caption; elide: Text.ElideRight; font.bold: true }
-                            Text { textFormat: Text.PlainText; text: (leader && leader.athlete && leader.athlete.position ? leader.athlete.position.abbreviation + " \u00b7 " : "") + (modelData.displayName || modelData.name || ""); color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption }
+                            Text { textFormat: Text.PlainText; text: leader && leader.athlete ? (leader.athlete.displayName || leader.athlete.shortName) : ""; color: root.fg; font.pixelSize: Style.font.caption; elide: Text.ElideRight; font.bold: true }
+                            Text { textFormat: Text.PlainText; text: (leader && leader.athlete && leader.athlete.position ? leader.athlete.position.abbreviation + " \u00b7 " : "") + (modelData.displayName || modelData.name || ""); color: root.fg; opacity: 0.5; font.pixelSize: Style.font.caption }
                           }
                           Text { textFormat: Text.PlainText; text: leader ? (leader.displayValue || leader.value || "") : ""; color: Color.accent; font.pixelSize: Style.font.caption; font.bold: true; font.family: "Monospace" }
                         }
@@ -2227,8 +2232,8 @@ Repeater {
                   width: parent.width
                   spacing: Style.space(6)
                   visible: root.detailPlays && root.detailPlays.length > 0
-                  PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Recent Plays"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  PanelSeparator { foreground: root.fg }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Recent Plays"); color: root.fg; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailPlays.length > 5 ? root.detailPlays.slice(root.detailPlays.length - 5) : (root.detailPlays || [])
                     delegate: Rectangle {
@@ -2236,7 +2241,7 @@ Repeater {
                       required property int index
                       width: parent.width
                       height: miniPlay.implicitHeight + Style.space(6)
-                      color: index % 2 === 1 ? Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.04) : "transparent"
+                      color: index % 2 === 1 ? Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.04) : "transparent"
                       radius: 2
                       Text {
                         textFormat: Text.PlainText
@@ -2244,7 +2249,7 @@ Repeater {
                         anchors.fill: parent
                         anchors.margins: Style.space(6)
                         text: (modelData.clock ? modelData.clock.displayValue + " " : "") + (modelData.text || modelData.description || "")
-                        color: modelData.scoringPlay ? Color.accent : root.barForeground
+                        color: modelData.scoringPlay ? Color.accent : root.fg
                         font.pixelSize: Style.font.caption
                         wrapMode: Text.WordWrap
                         maximumLineCount: 2
@@ -2270,8 +2275,8 @@ Repeater {
                   width: parent.width
                   spacing: Style.space(6)
                   visible: root.detailStandings && root.detailStandings.groups && root.detailStandings.groups.length > 0
-                  PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Standings"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  PanelSeparator { foreground: root.fg }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Standings"); color: root.fg; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailStandings ? root.detailStandings.groups : []
                     delegate: Column {
@@ -2289,10 +2294,10 @@ Repeater {
                           anchors.leftMargin: Style.space(6)
                           anchors.rightMargin: Style.space(6)
                           spacing: Style.space(8)
-                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; text: (modelData.divisionHeader || modelData.header || modelData.conferenceHeader || "").replace(/^\d{4}(-\d{2,4})? /, ""); color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true; elide: Text.ElideRight }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("W"); color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("L"); color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("T"); color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; text: (modelData.divisionHeader || modelData.header || modelData.conferenceHeader || "").replace(/^\d{4}(-\d{2,4})? /, ""); color: root.fg; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true; elide: Text.ElideRight }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("W"); color: root.fg; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("L"); color: root.fg; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("T"); color: root.fg; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
                         }
                       }
                       Repeater {
@@ -2323,11 +2328,11 @@ Repeater {
                             anchors.leftMargin: Style.space(6)
                             anchors.rightMargin: Style.space(6)
                             spacing: Style.space(8)
-                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(16); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["rank"]) !== "" ? root.standingsStat(modelData, ["rank"]) : String(modelData._rank); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.5; font.pixelSize: Style.font.caption; font.family: "Monospace" }
-                            Text { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.team || modelData.displayName || ""; color: isCurrent ? Color.accent : root.barForeground; font.pixelSize: Style.font.caption; elide: Text.ElideRight; font.bold: isCurrent }
-                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["wins","W"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
-                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["losses","L"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
-                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["ties","T"]); color: isCurrent ? Color.accent : root.barForeground; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
+                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(16); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["rank"]) !== "" ? root.standingsStat(modelData, ["rank"]) : String(modelData._rank); color: isCurrent ? Color.accent : root.fg; opacity: isCurrent ? 1 : 0.5; font.pixelSize: Style.font.caption; font.family: "Monospace" }
+                            Text { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.team || modelData.displayName || ""; color: isCurrent ? Color.accent : root.fg; font.pixelSize: Style.font.caption; elide: Text.ElideRight; font.bold: isCurrent }
+                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["wins","W"]); color: isCurrent ? Color.accent : root.fg; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
+                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["losses","L"]); color: isCurrent ? Color.accent : root.fg; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
+                            Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.standingsStat(modelData, ["ties","T"]); color: isCurrent ? Color.accent : root.fg; opacity: isCurrent ? 1 : 0.6; font.pixelSize: Style.font.caption; font.family: "Monospace"; font.bold: isCurrent }
                           }
                         }
                       }
@@ -2339,15 +2344,15 @@ Repeater {
                   width: parent.width
                   spacing: Style.space(6)
                   visible: root.detailInjuries && root.detailInjuries.length > 0
-                  PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Injuries"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  PanelSeparator { foreground: root.fg }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Injuries"); color: root.fg; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailInjuries
                     delegate: Column {
                       required property var modelData
                       width: parent.width
                       spacing: Style.space(2)
-                      Text { textFormat: Text.PlainText; width: parent.width; text: modelData.team ? modelData.team.abbreviation : ""; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true }
+                      Text { textFormat: Text.PlainText; width: parent.width; text: modelData.team ? modelData.team.abbreviation : ""; color: root.fg; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true }
                       Repeater {
                         model: (modelData.injuries || modelData.players || []).slice(0, 3)
                         delegate: Text {
@@ -2355,7 +2360,7 @@ Repeater {
                           required property var modelData
                           width: parent.width
                           text: (modelData.athlete ? modelData.athlete.displayName : modelData.displayName || "") + (modelData.status ? " \u2013 " + modelData.status : "")
-                          color: root.barForeground
+                          color: root.fg
                           opacity: 0.6
                           font.pixelSize: Style.font.caption
                           elide: Text.ElideRight
@@ -2370,8 +2375,8 @@ Repeater {
                   width: parent.width
                   spacing: Style.space(6)
                   visible: (root.detailNews && root.detailNews.length > 0) || (root.detailVideos && root.detailVideos.length > 0)
-                  PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Related"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  PanelSeparator { foreground: root.fg }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Related"); color: root.fg; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailNews
                     delegate: Text {
@@ -2409,7 +2414,7 @@ Repeater {
                   horizontalAlignment: Text.AlignHCenter
                   visible: (!root.detailLeaders || root.detailLeaders.length === 0) && (!root.detailPlays || root.detailPlays.length === 0) && (!root.detailStandings || !root.detailStandings.groups) && (!root.detailInjuries || root.detailInjuries.length === 0) && (!root.detailNews || root.detailNews.length === 0) && (!root.detailVideos || root.detailVideos.length === 0)
                   text: root.trFn("No insights for this game")
-                  color: root.barForeground
+                  color: root.fg
                   opacity: 0.4
                   font.pixelSize: Style.font.caption
                 }
