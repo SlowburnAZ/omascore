@@ -157,10 +157,10 @@ Panel {
   }
   function languageLabel() {
     var c = root.currentLanguage()
-    return c === "es" ? "Español" : (c === "en" ? "English" : "Auto")
+    return c === "es" ? "Español" : (c === "pt" ? "Português" : (c === "nl" ? "Nederlands" : (c === "en" ? "English" : "Auto")))
   }
   function cycleLanguage() {
-    var order = ["auto", "en", "es"]
+    var order = ["auto", "en", "es", "pt", "nl"]
     var next = order[(order.indexOf(root.currentLanguage()) + 1) % order.length]
     root.setSetting("language", next)
   }
