@@ -155,15 +155,6 @@ Panel {
     var v = (w && typeof w.setting === "function") ? w.setting("language", "auto") : "auto"
     return String(v || "auto")
   }
-  function languageLabel() {
-    var c = root.currentLanguage()
-    return c === "es" ? "Español" : (c === "pt" ? "Português" : (c === "nl" ? "Nederlands" : (c === "en" ? "English" : "Auto")))
-  }
-  function cycleLanguage() {
-    var order = ["auto", "en", "es", "pt", "nl"]
-    var next = order[(order.indexOf(root.currentLanguage()) + 1) % order.length]
-    root.setSetting("language", next)
-  }
   property string lastError: ""
 
   // Favorites persist in dconf (see saveFavorites); the pre-dconf state files
@@ -1291,25 +1282,21 @@ Panel {
               onClicked: root.setSetting("hideFinished", !root.hideFinished)
             }
 
-            RowLayout {
+            Dropdown {
               width: parent.width
-              spacing: Style.space(8)
-              Text {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                text: root.trFn("Language")
-                color: root.barForeground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.subtitle
-                elide: Text.ElideRight
-              }
-              Button {
-                text: root.languageLabel()
-                foreground: root.barForeground
-                accent: Color.accent
-                fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-                onClicked: root.cycleLanguage()
-              }
+              label: root.trFn("Language")
+              value: root.currentLanguage()
+              options: [
+                { value: "auto", label: "Auto" },
+                { value: "en", label: "English" },
+                { value: "es", label: "Español" },
+                { value: "pt", label: "Português" },
+                { value: "nl", label: "Nederlands" }
+              ]
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onChanged: function(v) { root.setSetting("language", v) }
             }
           }
 
