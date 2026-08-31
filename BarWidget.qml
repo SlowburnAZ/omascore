@@ -1,10 +1,31 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "I18n.js" as I18n
 
 BarWidget {
   id: root
   moduleName: "slowburnaz.omascore"
+
+  // Language: plugin setting "language" (auto|en|es), fallback system locale.
+  // langCode re-evaluates when the shell replaces settings; applyLang() runs
+  // from the change handler — never inside a binding — and bumps langRev so
+  // the tooltip binding repaints with the new lang.
+  property int langRev: 0
+  property string appliedLang: ""
+  readonly property string langCode: String(root.settings && root.settings.language ? root.settings.language : "auto")
+  onLangCodeChanged: root.applyLang()
+  function applyLang() {
+    var code = root.langCode
+    I18n.setLang(code === "auto" ? Qt.locale().name.substring(0, 2) : code)
+    var now = I18n.current()
+    if (now !== root.appliedLang) {
+      root.appliedLang = now
+      root.langRev++
+    }
+  }
+  readonly property var trFn: root.langRev >= 0 ? function(key) { return I18n.tr(key) } : null
+  Component.onCompleted: root.applyLang()
 
   readonly property var panel: panelLoader.item
 
@@ -65,7 +86,7 @@ BarWidget {
       : (root.panel.favLive && root.panel.favLiveLabel !== ""
            ? root.panel.favLiveLabel
            : (root.panel.liveCount > 0
-                ? root.panel.liveCount + " live"
+                ? root.panel.liveCount + root.trFn(" live")
                 : "OmaScore"))
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()

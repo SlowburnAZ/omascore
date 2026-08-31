@@ -3,6 +3,8 @@
 // Shared model for OmaScore — pure logic, no QML dependencies.
 // Import as `import "Model.js" as Model` from any QML file.
 
+.import "I18n.js" as I18n
+
 var dayLabels = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
 var monthLabels = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -67,7 +69,7 @@ function weekDataShift(weekStart, delta, today) {
 function weekLabel(weekDates) {
     if (!weekDates || weekDates.length !== 7) return ""
     var s = weekDates[0], e = weekDates[6]
-    var sm = monthLabels[s.getMonth()], em = monthLabels[e.getMonth()]
+    var sm = I18n.tr(monthLabels[s.getMonth()]), em = I18n.tr(monthLabels[e.getMonth()])
     if (s.getMonth() === e.getMonth()) return sm + " " + s.getDate() + " \u2013 " + e.getDate()
     return sm + " " + s.getDate() + " \u2013 " + em + " " + e.getDate()
 }
@@ -372,8 +374,14 @@ function validEventId(id) { return /^\d{1,12}$/.test(String(id == null ? "" : id
 
 function summaryUrl(eventId, leagueId) {
     if (!validEventId(eventId)) return ""
-    if (leagueId) { var L = leagueFor(leagueId); return summaryBaseFor(L.sport, L.league) + "?event=" + eventId }
-    return summaryBase + "?event=" + eventId
+    var base
+    if (leagueId) { var L = leagueFor(leagueId); base = summaryBaseFor(L.sport, L.league) }
+    else base = summaryBase
+    // ponytail: detail content localized by ESPN's lang param (plays, stats,
+    // insights). Scoreboard fetches stay English — notification logic regexes
+    // (postponed/suspended/cancel in g.detail) match English detail strings.
+    var lang = I18n.current()
+    return base + "?event=" + eventId + (lang ? "&lang=" + lang : "")
 }
 
 function scoreboardUrl(dateStr, leagueId) {
