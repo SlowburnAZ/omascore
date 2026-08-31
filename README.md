@@ -45,6 +45,10 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 - All leagues share a **7-day selector** (Sun–Sat). Dots mark days with games; select a day to load its scores (`?dates=YYYYMMDD`). Today keeps a small underline when another day is selected.
 - Shift weeks with the **‹** / **›** buttons. On open, today is auto-selected — or, if today has no games, the next day that does.
 
+### Languages
+
+The UI follows your system locale — currently English and Spanish (`LANG`/`LC_ALL`, e.g. `es_ES.UTF-8`) — or the **Language** setting in the panel's Settings screen. Translations live in `I18n.js`; unknown locales fall back to English. Common ESPN stat labels (fouls, cards, possession, …) are translated; anything the feed sends that isn't in the dictionary stays in English.
+
 ## Remove
 
 ```sh

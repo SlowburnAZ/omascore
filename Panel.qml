@@ -6,11 +6,48 @@ import Quickshell.Io
 import qs.Ui
 import qs.Commons
 import "Model.js" as Model
+import "I18n.js" as I18n
 
 Panel {
   id: root
   moduleName: "slowburnaz.omascore"
   manageIpc: false
+
+  // Language: plugin setting "language" (auto|en|es), falling back to the
+  // system locale. langCode is a binding on hostWidget's settings (re-evaluates
+  // when the shell injects or replaces them); applyLang() runs from the change
+  // handler — never inside a binding — and bumps langRev so every tx() text
+  // binding repaints with the new lang.
+  property int langRev: 0
+  // What THIS instance last painted with — NOT the shared I18n state: the bar
+  // sets the shared lang before panels construct, so a shared-state comparison
+  // skips the bump and bindings stay on their construction-time (English) eval
+  property string appliedLang: ""
+  readonly property string langCode: {
+    var w = root.hostWidget
+    var v = (w && typeof w.setting === "function") ? w.setting("language", "auto") : "auto"
+    return String(v || "auto")
+  }
+  onLangCodeChanged: {
+    root.applyLang()
+    // refetch an open detail so plays/stats render in the new language
+    if (root.selectedGame) root.loadDetail()
+  }
+  function applyLang() {
+    var code = root.langCode
+    I18n.setLang(code === "auto" ? Qt.locale().name.substring(0, 2) : code)
+    var now = I18n.current()
+    if (now !== root.appliedLang) {
+      root.appliedLang = now
+      root.langRev++
+    }
+  }
+  // Translator as a var property, NOT a method: text bindings read root.trFn
+  // (a property read — always captured), and langRev++ rebuilds it with a new
+  // identity, re-running every binding that holds it. A tx() method would
+  // capture nothing (method access isn't tracked; the langRev read inside is
+  // dead-code-eliminated), which is why texts stayed English.
+  readonly property var trFn: root.langRev >= 0 ? function(key) { return I18n.tr.apply(null, arguments) } : null
 
   property var anchorItem: null
   property var hostWidget: null
@@ -113,6 +150,11 @@ Panel {
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(w.moduleName, entry)
   }
+  function currentLanguage() {
+    var w = root.hostWidget
+    var v = (w && typeof w.setting === "function") ? w.setting("language", "auto") : "auto"
+    return String(v || "auto")
+  }
   property string lastError: ""
 
   // Favorites persist in dconf (see saveFavorites); the pre-dconf state files
@@ -148,7 +190,7 @@ Panel {
   // panel running past midnight would otherwise pin "today" to its start date
   property string todayYmd: Model.ymd(new Date())
   readonly property int todayIndex: root.weekDateStrs.indexOf(root.todayYmd)
-  property var dayLabels: Model.dayLabels
+  readonly property var dayLabels: root.langRev >= 0 ? Model.dayLabels.map(function(d) { return I18n.tr(d) }) : []
   property var monthLabels: Model.monthLabels
   // week fetch: one week-range scoreboard request, dots computed locally
   property string weekFetchLeague: ""
@@ -223,7 +265,7 @@ Panel {
   function titleize(s) { return Model.titleize(s) }
   function sundayOf(d) { return Model.sundayOf(d) }
   function ymd(d) { return Model.ymd(d) }
-  function weekLabel() { return Model.weekLabel(root.weekDates) }
+  readonly property string weekLabelText: root.langRev >= 0 ? Model.weekLabel(root.weekDates) : ""
   function leagueLabel(id) { return Model.leagueFor(id).label }
   function setLeague(id) {
     if (id == root.currentLeagueId) return
@@ -300,7 +342,7 @@ Panel {
   function loadDetail() { root.detailStale = false; root.detailError = ""; if (root.selectedGame) root.showDetail(root.selectedGame) }
   function parseDetail(raw) {
     var txt = String(raw||"").trim()
-    if (!txt) { root.detailError = "No details"; root.detailLoading = false; return }
+    if (!txt) { root.detailError = root.trFn("No details"); root.detailLoading = false; return }
     try {
       var r = Model.parseDetail(raw, root.selectedGame, root.currentLeagueId)
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
@@ -308,7 +350,7 @@ Panel {
       root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
       root.detailLoading = false
     } catch (e) {
-      if (!root.detailStale) { root.detailError = "Stale data"; root.detailStale = true } else { root.detailError = "Failed to load: " + String(e.message || e) }
+      if (!root.detailStale) { root.detailError = root.trFn("Stale data"); root.detailStale = true } else { root.detailError = root.trFn("Failed to load: ") + root.trFn(String(e.message || e)) }
       root.detailLoading = false
     }
   }
@@ -484,7 +526,7 @@ Panel {
       if (koMin > 0 && !Model.kickoffNotified[g.id] && !notifProc.running) {
         root.requestNotification("ko|" + root.currentLeagueId + "|" + g.id + "|" + koMin,
           ["notify-send", "-a", "OmaScore",
-            g.away.abbr + " @ " + g.home.abbr + " kicks off in " + koMin + " min",
+            root.trFn("%1 @ %2 kicks off in %3 min", g.away.abbr, g.home.abbr, koMin),
             root.leagueLabel(root.currentLeagueId) + " \u00b7 " + root.gameStatus(g)], g.id)
       }
       if (old === undefined || old === cur) continue
@@ -590,7 +632,7 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var t = root.gated(text)
-        if (t === null) { root.detailError = "Response too large"; root.detailLoading = false; return }
+        if (t === null) { root.detailError = root.trFn("Response too large"); root.detailLoading = false; return }
         root.parseDetail(t)
       }
     }
@@ -650,6 +692,7 @@ Panel {
   Component.onCompleted: {
     root.favWatcher = function(f) { root.favorites = f; root.applyFavorites() }
     Model.favWatchers.push(root.favWatcher)
+    root.applyLang()
     Qt.callLater(root.initForCurrent)
   }
   Component.onDestruction: {
@@ -894,7 +937,7 @@ Panel {
             textFormat: Text.PlainText
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: root.weekLabel()
+            text: root.weekLabelText
             color: root.barForeground
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -907,11 +950,11 @@ Panel {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: {
-              if (root.lastError !== "No games scheduled") return root.lastError
-              var day = root.weekDates.length === 7 ? root.dayLabels[root.selectedDay] + " " + root.weekDates[root.selectedDay].getDate() : "this day"
+              if (root.lastError !== "No games scheduled") return root.trFn(root.lastError)
+              var day = root.weekDates.length === 7 ? root.dayLabels[root.selectedDay] + " " + root.weekDates[root.selectedDay].getDate() : root.trFn("this day")
               var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
-              if (nxt >= 0) return "No games " + day + " \u2014 next up " + root.dayLabels[nxt]
-              return "No games " + day + " \u2014 try \u203A for next week"
+              if (nxt >= 0) return root.trFn("No games %1 \u2014 next up %2", day, root.dayLabels[nxt])
+              return root.trFn("No games %1 \u2014 try \u203A for next week", day)
             }
             visible: root.lastError !== "" && root.games.length === 0 && root.listVisible
             color: root.lastError === "No games scheduled" ? root.barForeground : root.urgentColor
@@ -967,7 +1010,7 @@ Panel {
             textFormat: Text.PlainText
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: "All games finished \u2014 unhide them in Settings"
+            text: root.trFn("All games finished \u2014 unhide them in Settings")
             visible: root.games.length > 0 && root.shownGames.length === 0 && root.listVisible
             color: root.barForeground
             opacity: 0.5
@@ -1188,7 +1231,7 @@ Panel {
               spacing: Style.space(8)
               Button {
                 iconText: "\u2039"
-                text: "Back"
+                text: root.trFn("Back")
                 foreground: root.barForeground
                 accent: Color.accent
                 fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1197,7 +1240,7 @@ Panel {
               Text {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
-                text: "Settings"
+                text: root.trFn("Settings")
                 color: root.barForeground
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.subtitle
@@ -1208,8 +1251,8 @@ Panel {
 
             Toggle {
               width: parent.width
-              label: "Score notifications"
-              description: "Notify when a favorited team's score changes"
+              label: root.trFn("Score notifications")
+              description: root.trFn("Notify when a favorited team's score changes")
               checked: root.notifyEnabled
               foreground: root.barForeground
               accent: Color.accent
@@ -1219,8 +1262,8 @@ Panel {
 
             Toggle {
               width: parent.width
-              label: "Show pre-game odds"
-              description: "Spread and over/under on upcoming games"
+              label: root.trFn("Show pre-game odds")
+              description: root.trFn("Spread and over/under on upcoming games")
               checked: root.showOdds
               foreground: root.barForeground
               accent: Color.accent
@@ -1230,13 +1273,30 @@ Panel {
 
             Toggle {
               width: parent.width
-              label: "Hide finished games"
-              description: "Hide games that have already ended"
+              label: root.trFn("Hide finished games")
+              description: root.trFn("Hide games that have already ended")
               checked: root.hideFinished
               foreground: root.barForeground
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.setSetting("hideFinished", !root.hideFinished)
+            }
+
+            Dropdown {
+              width: parent.width
+              label: root.trFn("Language")
+              value: root.currentLanguage()
+              options: [
+                { value: "auto", label: "Auto" },
+                { value: "en", label: "English" },
+                { value: "es", label: "Español" },
+                { value: "pt", label: "Português" },
+                { value: "nl", label: "Nederlands" }
+              ]
+              foreground: root.barForeground
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onChanged: function(v) { root.setSetting("language", v) }
             }
           }
 
@@ -1250,7 +1310,7 @@ Panel {
               spacing: Style.space(8)
               Button {
                 iconText: "\u2039"
-                text: "Back"
+                text: root.trFn("Back")
                 foreground: root.barForeground
                 accent: Color.accent
                 fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1481,7 +1541,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
-                  text: "Overall"
+                  text: root.trFn("Overall")
                   color: root.detailTab === 0 ? Color.background : root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -1499,7 +1559,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
-                  text: "Players"
+                  text: root.trFn("Players")
                   color: root.detailTab === 1 ? Color.background : root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -1517,7 +1577,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
-                  text: "Plays"
+                  text: root.trFn("Plays")
                   color: root.detailTab === 2 ? Color.background : root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -1535,7 +1595,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   anchors.centerIn: parent
-                  text: "Insights"
+                  text: root.trFn("Insights")
                   color: root.detailTab === 3 ? Color.background : root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -1571,7 +1631,7 @@ Panel {
                     textFormat: Text.PlainText
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
-                    text: "Loading stats\u2026"
+                    text: root.trFn("Loading stats\u2026")
                     color: root.barForeground
                     opacity: 0.6
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1591,7 +1651,7 @@ Panel {
             }
             Button {
               visible: root.detailStale
-              text: "Retry"
+              text: root.trFn("Retry")
               foreground: root.barForeground
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1664,7 +1724,7 @@ Panel {
                           anchors.rightMargin: Style.space(4)
                           spacing: Style.space(8)
                           Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: numA > numH ? awayCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: modelData.label; color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: root.trFn(modelData.label); color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
                           Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: numH > numA ? homeCol : root.barForeground; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                         }
                       }
@@ -1675,7 +1735,7 @@ Panel {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     visible: !root.detailStats || root.detailStats.length === 0
-                    text: "No stats available"
+                    text: root.trFn("No stats available")
                     color: root.barForeground
                     opacity: 0.5
                     font.pixelSize: Style.font.bodySmall
@@ -1730,7 +1790,7 @@ Repeater {
                             Text {
                               textFormat: Text.PlainText
                               anchors.centerIn: parent
-                              text: "Player"
+                              text: root.trFn("Player")
                               font.bold: true
                               font.pixelSize: Style.font.caption
                               color: root.barForeground
@@ -1837,7 +1897,7 @@ Repeater {
                             Text {
                               textFormat: Text.PlainText
                               anchors.centerIn: parent
-                              text: "Player"
+                              text: root.trFn("Player")
                               font.bold: true
                               font.pixelSize: Style.font.caption
                               color: root.barForeground
@@ -1925,7 +1985,7 @@ Repeater {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
                 visible: !root.detailPlayerGroups || root.detailPlayerGroups.length === 0
-                text: "No player stats available"
+                  text: root.trFn("No player stats available")
                 color: root.barForeground
                 opacity: 0.5
                 font.pixelSize: Style.font.bodySmall
@@ -1941,7 +2001,7 @@ Repeater {
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
                   visible: (!root.detailDrives || root.detailDrives.length === 0) && (!root.detailPlays || root.detailPlays.length === 0)
-                  text: "No plays available"
+                  text: root.trFn("No plays available")
                   color: root.barForeground
                   opacity: 0.5
                   font.pixelSize: Style.font.caption
@@ -2121,7 +2181,7 @@ Repeater {
                   width: parent.width
                   spacing: Style.space(6)
                   visible: root.detailLeaders && root.detailLeaders.length > 0
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Leaders"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Leaders"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailLeaders
                     delegate: Column {
@@ -2168,7 +2228,7 @@ Repeater {
                   spacing: Style.space(6)
                   visible: root.detailPlays && root.detailPlays.length > 0
                   PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Recent Plays"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Recent Plays"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailPlays.length > 5 ? root.detailPlays.slice(root.detailPlays.length - 5) : (root.detailPlays || [])
                     delegate: Rectangle {
@@ -2211,7 +2271,7 @@ Repeater {
                   spacing: Style.space(6)
                   visible: root.detailStandings && root.detailStandings.groups && root.detailStandings.groups.length > 0
                   PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Standings"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Standings"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailStandings ? root.detailStandings.groups : []
                     delegate: Column {
@@ -2230,9 +2290,9 @@ Repeater {
                           anchors.rightMargin: Style.space(6)
                           spacing: Style.space(8)
                           Text { textFormat: Text.PlainText; Layout.fillWidth: true; text: (modelData.divisionHeader || modelData.header || modelData.conferenceHeader || "").replace(/^\d{4}(-\d{2,4})? /, ""); color: root.barForeground; opacity: 0.5; font.pixelSize: Style.font.caption; font.bold: true; elide: Text.ElideRight }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "W"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "L"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
-                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: "T"; color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("W"); color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("L"); color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
+                          Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(20); horizontalAlignment: Text.AlignHCenter; text: root.trFn("T"); color: root.barForeground; opacity: 0.45; font.pixelSize: Style.font.caption; font.bold: true }
                         }
                       }
                       Repeater {
@@ -2280,7 +2340,7 @@ Repeater {
                   spacing: Style.space(6)
                   visible: root.detailInjuries && root.detailInjuries.length > 0
                   PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Injuries"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Injuries"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailInjuries
                     delegate: Column {
@@ -2311,7 +2371,7 @@ Repeater {
                   spacing: Style.space(6)
                   visible: (root.detailNews && root.detailNews.length > 0) || (root.detailVideos && root.detailVideos.length > 0)
                   PanelSeparator { foreground: root.barForeground }
-                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: "Related"; color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                  Text { textFormat: Text.PlainText; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.trFn("Related"); color: root.barForeground; opacity: 0.7; font.family: root.bar ? root.bar.fontFamily : Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
                   Repeater {
                     model: root.detailNews
                     delegate: Text {
@@ -2348,7 +2408,7 @@ Repeater {
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
                   visible: (!root.detailLeaders || root.detailLeaders.length === 0) && (!root.detailPlays || root.detailPlays.length === 0) && (!root.detailStandings || !root.detailStandings.groups) && (!root.detailInjuries || root.detailInjuries.length === 0) && (!root.detailNews || root.detailNews.length === 0) && (!root.detailVideos || root.detailVideos.length === 0)
-                  text: "No insights for this game"
+                  text: root.trFn("No insights for this game")
                   color: root.barForeground
                   opacity: 0.4
                   font.pixelSize: Style.font.caption
