@@ -1479,6 +1479,13 @@ Panel {
               }
             }
 
+            PanelSectionHeader {
+              width: parent.width
+              text: root.trFn("Notifications")
+              foreground: root.fg
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            }
+
             Toggle {
               width: parent.width
               label: root.trFn("Score notifications")
@@ -1517,6 +1524,13 @@ Panel {
               onChanged: function(v) { root.setSetting("kickoffWindow", parseInt(v)) }
             }
 
+            PanelSectionHeader {
+              width: parent.width
+              text: root.trFn("Display")
+              foreground: root.fg
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            }
+
             Toggle {
               width: parent.width
               label: root.trFn("Show pre-game odds")
@@ -1553,6 +1567,13 @@ Panel {
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onChanged: function(v) { root.setSetting("barMode", v) }
+            }
+
+            PanelSectionHeader {
+              width: parent.width
+              text: root.trFn("General")
+              foreground: root.fg
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
             }
 
             Dropdown {

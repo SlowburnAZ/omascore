@@ -18,6 +18,9 @@ var dict = {
     "Refresh": "Actualizar",
     "Show Today": "Mostrar hoy",
     "Retry": "Reintentar",
+    "Notifications": "Notificaciones",
+    "Display": "Visualización",
+    "General": "General",
     // settings
     "Score notifications": "Notificaciones de puntuación",
     "Notify when a favorited team's score changes": "Avisa cuando cambie la puntuación de un equipo favorito",
@@ -116,6 +119,9 @@ var dict = {
     "Refresh": "Atualizar",
     "Show Today": "Mostrar hoje",
     "Retry": "Tentar novamente",
+    "Notifications": "Notificações",
+    "Display": "Exibição",
+    "General": "Geral",
     // settings
     "Score notifications": "Notificações de placar",
     "Notify when a favorited team's score changes": "Avisa quando o placar de um time favorito mudar",
@@ -213,6 +219,9 @@ var dict = {
     "Refresh": "Vernieuwen",
     "Show Today": "Toon vandaag",
     "Retry": "Opnieuw proberen",
+    "Notifications": "Meldingen",
+    "Display": "Weergave",
+    "General": "Algemeen",
     // settings
     "Score notifications": "Scoormeldingen",
     "Notify when a favorited team's score changes": "Meldt wanneer de score van een favoriet team verandert",
