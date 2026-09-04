@@ -287,6 +287,7 @@ Panel {
   property var detailInjuries: []
   property var detailNews: []
   property var detailVideos: []
+  property var detailPredictor: null   // { awayPct, homePct } pre-game win chances, null when absent
   property bool detailLoading: false
   property bool detailRefreshing: false   // live background refetch in flight; old stats stay painted
   property bool detailStale: false
@@ -449,7 +450,7 @@ Panel {
     root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     // detail replaces the list in the same scroll area: drop any list scroll offset
     if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
-    root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
+    root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []; root.detailPredictor = null
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0; root.detailRefreshing = false
     detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
     if (Model.leagueFor(lg).sport === "soccer") {
@@ -463,7 +464,7 @@ Panel {
   function closeDetail() {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
-    root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
+    root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []; root.detailPredictor = null
     root.detailError = ""; root.detailLoading = false; root.detailRefreshing = false; root.detailStale = false
   }
   function loadDetail() { root.detailStale = false; root.detailError = ""; if (root.selectedGame) root.showDetail(root.selectedGame) }
@@ -489,7 +490,7 @@ Panel {
       var r = Model.parseDetail(raw, root.selectedGame, (root.selectedGame && root.selectedGame._lg) || root.currentLeagueId)
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
       root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = (root.confGroupsLeague === ((root.selectedGame && root.selectedGame._lg) || root.currentLeagueId) && root.confGroups) ? { groups: root.confGroups } : (r.detailStandings || null); root.detailInjuries = r.detailInjuries || []
-      root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
+      root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []; root.detailPredictor = r.detailPredictor || null
       root.detailLoading = false; root.detailRefreshing = false
     } catch (e) {
       if (quiet) { root.detailRefreshing = false; return }
@@ -1824,6 +1825,41 @@ Panel {
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
               font.bold: true
+            }
+            // Matchup predictor for pre-games (ESPN only sends it for some
+            // leagues — hidden when absent or once the game starts, so a stale
+            // pre-game number never renders next to a live score).
+            Row {
+              visible: root.detailPredictor !== null && root.selectedGame && root.selectedGame.state === "pre"
+              height: visible ? implicitHeight : 0
+              width: implicitWidth
+              // horizontalCenter anchor is inert inside a positioner Column —
+              // center explicitly like panelColumn does
+              x: (parent.width - width) / 2
+              spacing: Style.space(6)
+              Text {
+                textFormat: Text.PlainText
+                text: (root.selectedGame ? root.selectedGame.away.abbr : "") + " " + (root.detailPredictor ? root.detailPredictor.awayPct : "") + "%"
+                color: root.selectedGame && (root.selectedGame.away.color || "") !== "" ? root.teamColor(root.selectedGame.away.color) : root.fg
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              Text {
+                textFormat: Text.PlainText
+                text: "\u00b7"
+                color: root.fg
+                opacity: 0.4
+                font.pixelSize: Style.font.caption
+              }
+              Text {
+                textFormat: Text.PlainText
+                text: (root.detailPredictor ? root.detailPredictor.homePct : "") + "% " + (root.selectedGame ? root.selectedGame.home.abbr : "")
+                color: root.selectedGame && (root.selectedGame.home.color || "") !== "" ? root.teamColor(root.selectedGame.home.color) : root.fg
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
             }
             PanelSeparator { foreground: root.fg; visible: (root.detailStats && root.detailStats.length > 0) || (root.detailPlayers && root.detailPlayers.length > 0) }
 

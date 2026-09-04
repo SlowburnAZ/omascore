@@ -36,6 +36,7 @@ omarchy plugin add https://github.com/SlowburnAZ/omascore.git --enable
 - **Detail view**: the team header stays pinned while the stats scroll beneath it. Each side is tinted with its real ESPN team color (dark hues are lifted until they read on the panel).
 - **Overall tab**: Team statistics split by home/away with a vertical divider (labels are league-specific). A split bar under each row is sized by each team's share, so the leading side is visible at a glance.
 - **Live situation**: for NFL/CFB games in progress, the current down & distance and ball spot render in accent under the venue line.
+- **Matchup predictor**: for pre-games where ESPN publishes win chances, each side's percentage renders team-colored under the venue line (hidden once the game starts).
 - **Players tab**: Player statistics grouped by category with a fixed 110px Player column and horizontally scrollable stat columns.
 - **Favorites**: Teams saved per-league appear pinned at the top of the game list, above live games. They persist in dconf (the desktop settings store), so `omarchy plugin disable` / `remove` + `add`/`enable` keeps them.
 - **Logos**: Team logos loaded from ESPN network sources (transparent PNG).
