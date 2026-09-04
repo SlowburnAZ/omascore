@@ -1484,7 +1484,7 @@ Panel {
             PanelSectionHeader {
               width: parent.width
               text: root.trFn("Notifications")
-              foreground: root.fg
+              foreground: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
             }
 
@@ -1531,7 +1531,7 @@ Panel {
             PanelSectionHeader {
               width: parent.width
               text: root.trFn("Display")
-              foreground: root.fg
+              foreground: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
             }
 
@@ -1578,7 +1578,7 @@ Panel {
             PanelSectionHeader {
               width: parent.width
               text: root.trFn("General")
-              foreground: root.fg
+              foreground: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
             }
 
