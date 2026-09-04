@@ -1114,7 +1114,7 @@ Panel {
           TextField {
             id: filterField
             width: parent.width
-            visible: root.listVisible && root.shownGames.length > 0
+            visible: root.listVisible && root.shownGames.length > 1
             height: visible ? implicitHeight : 0
             placeholderText: root.trFn("Filter teams\u2026")
             text: root.filterText
