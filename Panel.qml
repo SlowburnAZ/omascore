@@ -134,6 +134,18 @@ Panel {
     var v = w.setting("notifications", true)
     return v !== false && v !== "false"
   }
+  readonly property bool notifyFinalsOnly: {
+    var w = root.hostWidget
+    if (!w || typeof w.setting !== "function") return false
+    var v = w.setting("notifyFinalsOnly", false)
+    return v === true || v === "true"
+  }
+  readonly property int kickoffWindow: {
+    var w = root.hostWidget
+    if (!w || typeof w.setting !== "function") return 10
+    var v = parseInt(w.setting("kickoffWindow", 10))
+    return isNaN(v) ? 10 : v
+  }
   readonly property bool showOdds: {
     var w = root.hostWidget
     if (!w || typeof w.setting !== "function") return true
@@ -550,7 +562,7 @@ Panel {
       }
       if (!root.notifyEnabled) continue
       if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
-      var koMin = Model.kickoffMinutes(g.date, g.state, new Date())
+      var koMin = root.kickoffWindow > 0 ? Model.kickoffMinutes(g.date, g.state, new Date(), root.kickoffWindow) : -1
       if (koMin > 0 && !Model.kickoffNotified[g.id] && !notifProc.running) {
         root.requestNotification("ko|" + root.currentLeagueId + "|" + g.id + "|" + koMin,
           ["notify-send", "-a", "OmaScore",
@@ -560,6 +572,7 @@ Panel {
       if (old === undefined || old === cur) continue
       var ev = Model.scoreEvent(old, g)
       if (!ev) continue
+      if (root.notifyFinalsOnly && ev !== "final") continue
       if (notifProc.running) continue
       root.requestNotification(root.currentLeagueId + "|" + g.id + "|" + ev + "|" + (g.away.score || "") + "|" + (g.home.score || ""),
         ev === "final"
@@ -1323,6 +1336,33 @@ Panel {
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.setSetting("notifications", !root.notifyEnabled)
+            }
+
+            Toggle {
+              width: parent.width
+              label: root.trFn("Finals only")
+              description: root.trFn("Only notify for final scores")
+              checked: root.notifyFinalsOnly
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.setSetting("notifyFinalsOnly", !root.notifyFinalsOnly)
+            }
+
+            Dropdown {
+              width: parent.width
+              label: root.trFn("Kickoff reminders")
+              value: String(root.kickoffWindow)
+              options: [
+                { value: "0", label: root.trFn("Off") },
+                { value: "10", label: "10 min" },
+                { value: "30", label: "30 min" },
+                { value: "60", label: "60 min" }
+              ]
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onChanged: function(v) { root.setSetting("kickoffWindow", parseInt(v)) }
             }
 
             Toggle {

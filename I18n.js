@@ -19,6 +19,10 @@ var dict = {
     // settings
     "Score notifications": "Notificaciones de puntuación",
     "Notify when a favorited team's score changes": "Avisa cuando cambie la puntuación de un equipo favorito",
+    "Finals only": "Solo finales",
+    "Only notify for final scores": "Avisa solo de los resultados finales",
+    "Kickoff reminders": "Avisos de inicio",
+    "Off": "Desactivado",
     "Show pre-game odds": "Mostrar cuotas previas",
     "Spread and over/under on upcoming games": "Hándicap y total (O/U) de los próximos partidos",
     "Hide finished games": "Ocultar partidos terminados",
@@ -107,6 +111,10 @@ var dict = {
     // settings
     "Score notifications": "Notificações de placar",
     "Notify when a favorited team's score changes": "Avisa quando o placar de um time favorito mudar",
+    "Finals only": "Somente finais",
+    "Only notify for final scores": "Avisa apenas sobre os placares finais",
+    "Kickoff reminders": "Lembretes de início",
+    "Off": "Desligado",
     "Show pre-game odds": "Mostrar odds pré-jogo",
     "Spread and over/under on upcoming games": "Handicap e total (O/U) dos próximos jogos",
     "Hide finished games": "Ocultar jogos encerrados",
@@ -194,6 +202,10 @@ var dict = {
     // settings
     "Score notifications": "Scoormeldingen",
     "Notify when a favorited team's score changes": "Meldt wanneer de score van een favoriet team verandert",
+    "Finals only": "Alleen eindstanden",
+    "Only notify for final scores": "Meld alleen eindstanden",
+    "Kickoff reminders": "Aftrapmeldingen",
+    "Off": "Uit",
     "Show pre-game odds": "Wedkansen voor de wedstrijd tonen",
     "Spread and over/under on upcoming games": "Handicap en totaal (O/U) van komende wedstrijden",
     "Hide finished games": "Afgelopen wedstrijden verbergen",
