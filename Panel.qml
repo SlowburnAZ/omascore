@@ -1922,7 +1922,7 @@ Panel {
                         readonly property color awayCol: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : Color.accent
                         readonly property color homeCol: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : Color.accent
                         width: parent.width
-                        height: row.implicitHeight + Style.space(4)
+                        height: statRow.implicitHeight + Style.space(4)
                         color: index % 2 === 1 ? Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.04) : "transparent"
                         radius: 2
                         // diverging bars: grow outward from the center divider, length = share of the stat
@@ -1947,7 +1947,7 @@ Panel {
                           color: Qt.rgba(homeCol.r, homeCol.g, homeCol.b, 0.8)
                         }
                         RowLayout {
-                          id: row
+                          id: statRow
                           anchors.fill: parent
                           anchors.leftMargin: Style.space(4)
                           anchors.rightMargin: Style.space(4)
@@ -2303,7 +2303,7 @@ Repeater {
                             anchors.bottomMargin: Style.space(4)
                             spacing: Style.space(8)
                             Rectangle {
-                              Layout.preferredWidth: Math.max(Style.space(40), chipText.implicitWidth + Style.space(8))
+                              Layout.preferredWidth: Math.max(Style.space(40), driveChipText.implicitWidth + Style.space(8))
                               Layout.alignment: Qt.AlignTop
                               height: Style.space(16)
                               radius: 3
@@ -2311,7 +2311,7 @@ Repeater {
                               visible: root.playChipText(modelData) !== ""
                               Text {
                                 textFormat: Text.PlainText
-                                id: chipText
+                                id: driveChipText
                                 anchors.centerIn: parent
                                 text: root.playChipText(modelData)
                                 color: root.fg
@@ -2361,7 +2361,7 @@ Repeater {
                         anchors.bottomMargin: Style.space(4)
                         spacing: Style.space(8)
                         Rectangle {
-                          Layout.preferredWidth: Math.max(Style.space(40), chipText.implicitWidth + Style.space(8))
+                          Layout.preferredWidth: Math.max(Style.space(40), flatChipText.implicitWidth + Style.space(8))
                           Layout.alignment: Qt.AlignTop
                           height: Style.space(16)
                           radius: 3
@@ -2369,7 +2369,7 @@ Repeater {
                           visible: root.playChipText(modelData) !== ""
                           Text {
                             textFormat: Text.PlainText
-                            id: chipText
+                            id: flatChipText
                             anchors.centerIn: parent
                             text: root.playChipText(modelData)
                             color: root.fg
