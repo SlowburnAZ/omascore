@@ -27,6 +27,9 @@ BarWidget {
   readonly property var trFn: root.langRev >= 0 ? function(key) { return I18n.tr(key) } : null
   Component.onCompleted: root.applyLang()
 
+  // Bar display mode: plugin setting "barMode" (favScore|liveCount|icon).
+  readonly property string barMode: String(root.settings && root.settings.barMode ? root.settings.barMode : "favScore")
+
   readonly property var panel: panelLoader.item
 
   readonly property bool opened: root.panel ? root.panel.opened === true : false
@@ -75,12 +78,13 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.panel && root.panel.favLive && root.panel.favLiveScore !== "" && !button.vertical
-      ? "\u2605 " + root.panel.favLiveScore
-      : "\uf091"
+    text: !root.panel || button.vertical || root.barMode === "icon" ? ""
+      : root.barMode === "liveCount" && root.panel.liveCount > 0 ? "● " + root.panel.liveCount
+      : root.panel.favLive && root.panel.favLiveScore !== "" ? "★ " + root.panel.favLiveScore
+      : ""
     dimmed: !root.panel || root.panel.barGameCount === 0
-    active: root.panel ? root.panel.favLive : false
-    foreground: root.panel && root.panel.favLive ? Color.accent : Color.foreground
+    active: root.panel ? (root.panel.favLive || (root.barMode === "liveCount" && root.panel.liveCount > 0)) : false
+    foreground: button.active ? Color.accent : Color.foreground
     tooltipText: !root.panel || root.panel.barGameCount === 0
       ? "OmaScore"
       : (root.panel.favLive && root.panel.favLiveLabel !== ""

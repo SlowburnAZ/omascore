@@ -155,6 +155,11 @@ Panel {
     var v = (w && typeof w.setting === "function") ? w.setting("language", "auto") : "auto"
     return String(v || "auto")
   }
+  function currentBarMode() {
+    var w = root.hostWidget
+    var v = (w && typeof w.setting === "function") ? w.setting("barMode", "favScore") : "favScore"
+    return String(v || "favScore")
+  }
   property string lastError: ""
 
   // Favorites persist in dconf (see saveFavorites); the pre-dconf state files
@@ -1285,6 +1290,21 @@ Panel {
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.setSetting("hideFinished", !root.hideFinished)
+            }
+
+            Dropdown {
+              width: parent.width
+              label: root.trFn("Bar display")
+              value: root.currentBarMode()
+              options: [
+                { value: "favScore", label: "Favorite score" },
+                { value: "liveCount", label: "Live count" },
+                { value: "icon", label: "Icon only" }
+              ]
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onChanged: function(v) { root.setSetting("barMode", v) }
             }
 
             Dropdown {

@@ -23,6 +23,7 @@ var dict = {
     "Spread and over/under on upcoming games": "Hándicap y total (O/U) de los próximos partidos",
     "Hide finished games": "Ocultar partidos terminados",
     "Hide games that have already ended": "Oculta los partidos que ya han terminado",
+    "Bar display": "Visualización en la barra",
     "Language": "Idioma",
     // game list
     "No games scheduled": "No hay partidos programados",
@@ -110,6 +111,7 @@ var dict = {
     "Spread and over/under on upcoming games": "Handicap e total (O/U) dos próximos jogos",
     "Hide finished games": "Ocultar jogos encerrados",
     "Hide games that have already ended": "Oculta os jogos que já terminaram",
+    "Bar display": "Exibição na barra",
     "Language": "Idioma",
     // game list
     "No games scheduled": "Nenhum jogo agendado",
@@ -196,6 +198,7 @@ var dict = {
     "Spread and over/under on upcoming games": "Handicap en totaal (O/U) van komende wedstrijden",
     "Hide finished games": "Afgelopen wedstrijden verbergen",
     "Hide games that have already ended": "Verbergt wedstrijden die al zijn afgelopen",
+    "Bar display": "Balkweergave",
     "Language": "Taal",
     // game list
     "No games scheduled": "Geen wedstrijden gepland",
