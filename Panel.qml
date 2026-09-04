@@ -1479,6 +1479,8 @@ Panel {
               }
             }
 
+            PanelSeparator { foreground: root.fg }
+
             PanelSectionHeader {
               width: parent.width
               text: root.trFn("Notifications")
@@ -1524,6 +1526,8 @@ Panel {
               onChanged: function(v) { root.setSetting("kickoffWindow", parseInt(v)) }
             }
 
+            PanelSeparator { foreground: root.fg }
+
             PanelSectionHeader {
               width: parent.width
               text: root.trFn("Display")
@@ -1568,6 +1572,8 @@ Panel {
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onChanged: function(v) { root.setSetting("barMode", v) }
             }
+
+            PanelSeparator { foreground: root.fg }
 
             PanelSectionHeader {
               width: parent.width
