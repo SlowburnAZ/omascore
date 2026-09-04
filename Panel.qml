@@ -218,6 +218,7 @@ Panel {
   property var detailNews: []
   property var detailVideos: []
   property bool detailLoading: false
+  property bool detailRefreshing: false   // live background refetch in flight; old stats stay painted
   property bool detailStale: false
   property string detailError: ""
   property int detailTab: 0
@@ -334,7 +335,7 @@ Panel {
     // detail replaces the list in the same scroll area: drop any list scroll offset
     if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
-    root.detailError = ""; root.detailLoading = true; root.detailTab = 0
+    root.detailError = ""; root.detailLoading = true; root.detailTab = 0; root.detailRefreshing = false
     detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
     if (Model.leagueFor(root.currentLeagueId).sport === "soccer") {
       root.confFetchLeague = root.currentLeagueId
@@ -348,19 +349,35 @@ Panel {
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     if (scrollArea.contentItem) scrollArea.contentItem.contentY = 0
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
-    root.detailError = ""; root.detailLoading = false; root.detailStale = false
+    root.detailError = ""; root.detailLoading = false; root.detailRefreshing = false; root.detailStale = false
   }
   function loadDetail() { root.detailStale = false; root.detailError = ""; if (root.selectedGame) root.showDetail(root.selectedGame) }
+  // Background refresh for a live game: refetch the summary without clearing
+  // the painted stats, resetting the tab, or jumping the scroll — parseDetail
+  // swaps the data in place when the payload lands. Failures keep old data.
+  function refreshDetailQuiet() {
+    if (!root.selectedGame || !Model.validEventId(root.selectedGame.id)) return
+    if (detailProc.running || root.detailLoading || root.detailRefreshing) return
+    var url = Model.summaryUrl(root.selectedGame.id, root.currentLeagueId)
+    if (!url) return
+    root.detailRefreshing = true
+    detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
+  }
   function parseDetail(raw) {
+    var quiet = root.detailRefreshing
     var txt = String(raw||"").trim()
-    if (!txt) { root.detailError = root.trFn("No details"); root.detailLoading = false; return }
+    if (!txt) {
+      if (quiet) { root.detailRefreshing = false; return }
+      root.detailError = root.trFn("No details"); root.detailLoading = false; return
+    }
     try {
       var r = Model.parseDetail(raw, root.selectedGame, root.currentLeagueId)
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
       root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = (root.confGroupsLeague === root.currentLeagueId && root.confGroups) ? { groups: root.confGroups } : (r.detailStandings || null); root.detailInjuries = r.detailInjuries || []
       root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
-      root.detailLoading = false
+      root.detailLoading = false; root.detailRefreshing = false
     } catch (e) {
+      if (quiet) { root.detailRefreshing = false; return }
       if (!root.detailStale) { root.detailError = root.trFn("Stale data"); root.detailStale = true } else { root.detailError = root.trFn("Failed to load: ") + root.trFn(String(e.message || e)) }
       root.detailLoading = false
     }
@@ -643,7 +660,10 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var t = root.gated(text)
-        if (t === null) { root.detailError = root.trFn("Response too large"); root.detailLoading = false; return }
+        if (t === null) {
+          if (root.detailRefreshing) { root.detailRefreshing = false; return }
+          root.detailError = root.trFn("Response too large"); root.detailLoading = false; return
+        }
         root.parseDetail(t)
       }
     }
@@ -683,12 +703,22 @@ Panel {
     onTriggered: root.refresh()
   }
 
+  // Live detail follows the game without user action: same adaptive cadence
+  // as the list poll, background-swapped so the tab and scroll never jump.
+  Timer {
+    id: detailPollTimer
+    interval: root.pollInterval
+    repeat: true
+    running: root.selectedGame !== null && root.selectedGame.state === "in" && !root.showSettings
+    onTriggered: root.refreshDetailQuiet()
+  }
+
   Timer {
     id: detailFlashExpire
     interval: 700
     onTriggered: root.flashTick++
   }
-  onPollIntervalChanged: pollTimer.restart()
+  onPollIntervalChanged: { pollTimer.restart(); detailPollTimer.restart() }
 
   function restoreLastLeague() {
     if (root.leagueRestored) return
