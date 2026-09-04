@@ -308,6 +308,7 @@ Panel {
     root.checkWeekGames(); root.refreshSelected()
   }
   function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.cursorIndex = -1; root.refreshSelected() }
+  function goToday() { if (root.todayIndex >= 0) root.selectDay(root.todayIndex); else root.initWeek() }
   function checkWeekGames() {
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
     var args = Model.weekArgs(root.weekDateStrs, root.currentLeagueId)
@@ -774,6 +775,30 @@ Panel {
               anchors.left: heroIcon.right
               anchors.leftMargin: Style.space(14)
               anchors.verticalCenter: parent.verticalCenter
+            }
+            Button {
+              id: refreshButton
+              anchors.right: settingsButton.left
+              anchors.rightMargin: Style.space(4)
+              anchors.verticalCenter: parent.verticalCenter
+              visible: root.listVisible
+              iconText: ""
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.refresh()
+            }
+            Button {
+              id: todayButton
+              anchors.right: refreshButton.left
+              anchors.rightMargin: Style.space(4)
+              anchors.verticalCenter: parent.verticalCenter
+              visible: root.listVisible
+              iconText: ""
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.goToday()
             }
             Button {
               id: settingsButton
