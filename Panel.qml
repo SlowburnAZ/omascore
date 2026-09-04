@@ -198,10 +198,19 @@ Panel {
   readonly property var shownGames: root.hideFinished
     ? root.games.filter(function(g) { return g.state !== "post" })
     : root.games
+  // Team search: matches abbr or name on either side, case-insensitive.
+  property string filterText: ""
+  onFilterTextChanged: root.cursorIndex = -1
+  readonly property var filteredGames: root.filterText === ""
+    ? root.shownGames
+    : root.shownGames.filter(function(g) {
+        var q = root.filterText.toLowerCase()
+        return ((g.away.abbr || "") + " " + (g.away.name || "") + " " + (g.home.abbr || "") + " " + (g.home.name || "")).toLowerCase().indexOf(q) >= 0
+      })
   // ListView-backed games list: delegate data lives in this model so reorders
   // animate as real row moves (move/displaced transitions) instead of a reset
   ListModel { id: gamesModel; dynamicRoles: true }
-  onShownGamesChanged: reconcileGames()
+  onFilteredGamesChanged: reconcileGames()
   readonly property bool listVisible: root.selectedGame === null && !root.showSettings
   property var weekStart: null
   property var weekDateStrs: []
@@ -293,6 +302,7 @@ Panel {
   function setLeague(id) {
     if (id == root.currentLeagueId) return
     root.currentLeagueId = id
+    root.filterText = ""
     root.selectedGame = null; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     root.games = []; root.lastError = ""
     root.prevScores = ({})
@@ -453,7 +463,7 @@ Panel {
   // Diff shownGames into gamesModel in place: setProperty refreshes scores
   // without recreating delegates, move() slides rows to their new position
   function reconcileGames() {
-    var want = root.shownGames
+    var want = root.filteredGames
     var ids = {}
     for (var i = 0; i < want.length; i++) ids[want[i].id] = true
     for (var i = gamesModel.count - 1; i >= 0; i--) {
@@ -609,11 +619,11 @@ Panel {
   function statNum(s) { var t = (s || "").trim(); return /^-?\d+(\.\d+)?$/.test(t) ? parseFloat(t) : 0 }
   function moveCursor(dy) {
     if (!root.listVisible) return
-    root.cursorIndex = Math.max(-1, Math.min(root.shownGames.length - 1, root.cursorIndex + dy))
+    root.cursorIndex = Math.max(-1, Math.min(root.filteredGames.length - 1, root.cursorIndex + dy))
   }
   function activateCursor() {
-    if (root.listVisible && root.cursorIndex >= 0 && root.cursorIndex < root.shownGames.length)
-      root.showDetail(root.shownGames[root.cursorIndex])
+    if (root.listVisible && root.cursorIndex >= 0 && root.cursorIndex < root.filteredGames.length)
+      root.showDetail(root.filteredGames[root.cursorIndex])
   }
   function gameStatus(g) {
     if (!g) return ""
@@ -775,6 +785,8 @@ Panel {
       PanelKeyCatcher {
         id: keyCatcher
         anchors.fill: parent
+        // let the team filter receive keys while editing (see filterField)
+        blocked: filterField.activeFocus
         onCloseRequested: { if (root.showSettings) root.showSettings = false; else if (root.selectedGame) root.closeDetail(); else if (root.cursorIndex >= 0) root.cursorIndex = -1; else root.close() }
         onTabRequested: function(direction) { if (root.selectedGame) root.closeDetail(); else root.switchPanel(direction) }
         onMoveRequested: function(dx, dy) { root.moveCursor(dy) }
@@ -1093,6 +1105,32 @@ Panel {
             horizontalAlignment: Text.AlignHCenter
             text: root.trFn("All games finished \u2014 unhide them in Settings")
             visible: root.games.length > 0 && root.shownGames.length === 0 && root.listVisible
+            color: root.fg
+            opacity: 0.5
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+          }
+
+          TextField {
+            id: filterField
+            width: parent.width
+            visible: root.listVisible && root.shownGames.length > 0
+            height: visible ? implicitHeight : 0
+            placeholderText: root.trFn("Filter teams\u2026")
+            text: root.filterText
+            onTextChanged: root.filterText = text
+            onAccepted: filterField.focus = false
+            foreground: root.fg
+            accent: Color.accent
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.trFn("No matches for \"%1\"", root.filterText)
+            visible: root.listVisible && root.shownGames.length > 0 && root.filteredGames.length === 0
             color: root.fg
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family

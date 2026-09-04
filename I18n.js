@@ -36,6 +36,8 @@ var dict = {
     "No games %1 \u2014 next up %2": "Sin partidos %1 \u2014 siguiente %2",
     "No games %1 \u2014 try \u203A for next week": "Sin partidos %1 \u2014 pulsa \u203A para la próxima semana",
     "All games finished \u2014 unhide them in Settings": "Todos los partidos terminaron \u2014 muéstralos en Ajustes",
+    "Filter teams\u2026": "Filtrar equipos\u2026",
+    "No matches for \"%1\"": "Sin resultados para \"%1\"",
     "this day": "este día",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 comienza en %3 min",
     // detail tabs / sections
@@ -130,6 +132,8 @@ var dict = {
     "No games %1 \u2014 next up %2": "Sem jogos %1 \u2014 próximo %2",
     "No games %1 \u2014 try \u203A for next week": "Sem jogos %1 \u2014 toque \u203A para a próxima semana",
     "All games finished \u2014 unhide them in Settings": "Todos os jogos encerrados \u2014 reexiba-os em Configurações",
+    "Filter teams\u2026": "Filtrar times\u2026",
+    "No matches for \"%1\"": "Sem resultados para \"%1\"",
     "this day": "este dia",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 começa em %3 min",
     // detail tabs / sections
@@ -223,6 +227,8 @@ var dict = {
     "No games %1 \u2014 next up %2": "Geen wedstrijden %1 \u2014 hierna %2",
     "No games %1 \u2014 try \u203A for next week": "Geen wedstrijden %1 \u2014 tik \u203A voor volgende week",
     "All games finished \u2014 unhide them in Settings": "Alle wedstrijden afgelopen \u2014 maak ze zichtbaar in Instellingen",
+    "Filter teams\u2026": "Teams filteren\u2026",
+    "No matches for \"%1\"": "Geen resultaten voor \"%1\"",
     "this day": "deze dag",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 begint over %3 min",
     // detail tabs / sections
