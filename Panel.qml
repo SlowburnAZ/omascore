@@ -69,6 +69,10 @@ Panel {
   property string confGroupsLeague: ""
   property string lastFetchedDay: ""    // day of the payload parseGames is about to receive
   readonly property int liveBoardMaxAge: 150000  // shared board older than this is stale
+  // Bumped every time a board slot lands: noteScoreboard() mutates plain JS
+  // (untracked by bindings), so bar derivations reading barSlots() watch this
+  // to re-evaluate when another league's fetch lands.
+  property int boardRev: 0
   // Leagues the bar covers: every league with a favorited team, plus whatever
   // this panel browses (keeps the browsed league's "N live"/dimming semantics).
   function barLeagues() {
@@ -99,6 +103,7 @@ Panel {
     return out
   }
   readonly property var favLiveGames: {
+    root.boardRev
     var out = []
     var slots = root.barSlots()
     for (var i = 0; i < slots.length; i++) {
@@ -135,6 +140,7 @@ Panel {
   // Static start time, not a ticking countdown: bindings with `new Date()`
   // never re-evaluate, and a stale "in 2h" misleads worse than a fixed time.
   readonly property var nextFavGame: {
+    root.boardRev
     var best = null
     var slots = root.barSlots()
     for (var i = 0; i < slots.length; i++) {
@@ -531,6 +537,7 @@ Panel {
             var r = Model.parseGames(t)
             Model.noteScoreboard(root.barFeedLeague, Model.ymd(new Date()), r.games)
             root.recount()
+            root.boardRev++
             if (root.favView) root.refreshFavs()
           } catch (e) {}
         }
