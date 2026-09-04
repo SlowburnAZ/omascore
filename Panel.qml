@@ -72,7 +72,10 @@ Panel {
   // Leagues the bar covers: every league with a favorited team, plus whatever
   // this panel browses (keeps the browsed league's "N live"/dimming semantics).
   function barLeagues() {
-    var out = [root.currentLeagueId]
+    var out = []
+    // the browsed league only counts when it is a real league — the "favs"
+    // aggregate view is not fetchable and must not pollute the shared board
+    if (Model.leagueFor(root.currentLeagueId).id === root.currentLeagueId) out.push(root.currentLeagueId)
     var favs = Model.favLeagues(Model.favorites)
     for (var i = 0; i < favs.length; i++) if (out.indexOf(favs[i]) < 0) out.push(favs[i])
     return out
@@ -187,6 +190,10 @@ Panel {
   readonly property color fg: root.bar ? root.bar.foreground : Color.foreground
 
   property string currentLeagueId: Model.defaultLeagueId
+  // Aggregate view id: shows today's favorited-team games across every league
+  // with favorites (painted from the shared board — no extra fetches). It is
+  // never persisted as lastLeague and never enters barLeagues().
+  readonly property bool favView: root.currentLeagueId === "favs"
   readonly property bool hideFinished: {
     var w = root.hostWidget
     if (!w || typeof w.setting !== "function") return false
@@ -250,8 +257,12 @@ Panel {
     return false
   }
 
-  function isFav(abbr) { return Model.isFav(root.favorites, abbr, root.currentLeagueId) }
-  function applyFavorites() { root.games = root.sorted(root.games); root.recount(); root.refreshBarFeed() }
+  function isFav(abbr, lg) { return Model.isFav(root.favorites, abbr, lg || root.currentLeagueId) }
+  function applyFavorites() {
+    if (root.favView) root.refreshFavs()
+    else root.games = root.sorted(root.games)
+    root.recount(); root.refreshBarFeed()
+  }
   function saveFavorites() { dconfWrite(Model.DCONF_FAVORITES, JSON.stringify(root.favorites)) }
   // Per-panel sync: shared Model.favorites notifies these watchers on every
   // change from any panel. The source panel is skipped (it applied its own
@@ -268,12 +279,15 @@ Panel {
       root.applyFavorites()
     })
   }
-  function toggleFav(abbr) {
-    root.favorites = Model.setFavorites(Model.toggleFavMap(Model.favorites, root.currentLeagueId, abbr), root.favWatcher)
+  function toggleFav(abbr, lg) {
+    var L = lg || root.currentLeagueId
+    root.favorites = Model.setFavorites(Model.toggleFavMap(Model.favorites, L, abbr), root.favWatcher)
     root.saveFavorites()
     // no immediate re-sort: rows jumping under the finger reads as a glitch —
-    // the reorder lands with the next fresh fetch instead
+    // the reorder lands with the next fresh fetch instead (but the favs view
+    // drops unstarred rows right away, since they no longer belong there)
     root.recount()
+    if (root.favView) root.refreshFavs()
     root.refresh()
   }
   function isLeagueFav(id) { return Model.isLeagueFav(root.favorites, id) }
@@ -312,7 +326,7 @@ Panel {
     root.confGroups = null
     root.confGroupsLeague = ""
     root.initWeek()
-    root.setSetting("lastLeague", id)
+    if (id !== "favs") root.setSetting("lastLeague", id)
   }
 
   function initWeek() {
@@ -333,6 +347,7 @@ Panel {
   function selectDay(idx) { if (idx < 0 || idx > 6) return; root.selectedDay = idx; root.cursorIndex = -1; root.refreshSelected() }
   function goToday() { if (root.todayIndex >= 0) root.selectDay(root.todayIndex); else root.initWeek() }
   function checkWeekGames() {
+    if (root.favView) return
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
     var args = Model.weekArgs(root.weekDateStrs, root.currentLeagueId)
     if (!args) return
@@ -340,6 +355,9 @@ Panel {
     weekProc.running = false; weekProc.command = args; weekProc.running = true
   }
   function refreshSelected() {
+    // favs view paints today's favorites from the shared board and tops up
+    // every covered league — the day selector does not apply to it
+    if (root.favView) { root.refreshFavs(); root.refreshBarFeed(); return }
     var ds = root.weekDateStrs[root.selectedDay] || ""
     if (!ds) return
     root.lastFetchedDay = ds
@@ -349,9 +367,42 @@ Panel {
     if (!args) return
     fetchProc.running = false; fetchProc.command = args; fetchProc.running = true
   }
+  // Favorites aggregate: today's favorited-team games from every covered
+  // league's board slot. Rows are shallow copies tagged with _lg (their real
+  // league) so detail, fav toggles, and labels resolve per-game — the shared
+  // board objects are never mutated.
+  function sortedFav(list) {
+    var arr = list.slice()
+    var ord = { "in": 0, "pre": 1, "post": 2 }
+    arr.sort(function(a, b) {
+      var ao = ord[a.state] !== undefined ? ord[a.state] : 3
+      var bo = ord[b.state] !== undefined ? ord[b.state] : 3
+      if (ao !== bo) return ao - bo
+      return String(a.date) < String(b.date) ? -1 : (String(a.date) > String(b.date) ? 1 : 0)
+    })
+    return arr
+  }
+  function refreshFavs() {
+    var out = []
+    var slots = root.barSlots()
+    for (var i = 0; i < slots.length; i++) {
+      var games = slots[i].games
+      for (var j = 0; j < games.length; j++) {
+        var g = games[j]
+        if (!g.away || !g.home) continue
+        if (!(Model.isFav(root.favorites, g.away.abbr, slots[i].lg) || Model.isFav(root.favorites, g.home.abbr, slots[i].lg))) continue
+        var c = {}
+        for (var k in g) c[k] = g[k]
+        c._lg = slots[i].lg
+        out.push(c)
+      }
+    }
+    root.games = root.sortedFav(out)
+  }
   function showDetail(game) {
     if (!game || !Model.validEventId(game.id)) return
-    var url = Model.summaryUrl(game.id, root.currentLeagueId)
+    var lg = game._lg || root.currentLeagueId
+    var url = Model.summaryUrl(game.id, lg)
     if (!url) return
     root.selectedGame = game; root.detailStats = null; root.detailTeams = null; root.detailPlayers = null; root.detailPlayerGroups = null
     // detail replaces the list in the same scroll area: drop any list scroll offset
@@ -359,9 +410,9 @@ Panel {
     root.detailLeaders = []; root.detailPlays = []; root.detailDrives = []; root.detailStandings = null; root.detailInjuries = []; root.detailNews = []; root.detailVideos = []
     root.detailError = ""; root.detailLoading = true; root.detailTab = 0; root.detailRefreshing = false
     detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
-    if (Model.leagueFor(root.currentLeagueId).sport === "soccer") {
-      root.confFetchLeague = root.currentLeagueId
-      var L = Model.leagueFor(root.currentLeagueId)
+    if (Model.leagueFor(lg).sport === "soccer") {
+      root.confFetchLeague = lg
+      var L = Model.leagueFor(lg)
       standingsProc.running = false
       standingsProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, Model.standingsUrlFor(L.sport, L.league)]
       standingsProc.running = true
@@ -380,7 +431,7 @@ Panel {
   function refreshDetailQuiet() {
     if (!root.selectedGame || !Model.validEventId(root.selectedGame.id)) return
     if (detailProc.running || root.detailLoading || root.detailRefreshing) return
-    var url = Model.summaryUrl(root.selectedGame.id, root.currentLeagueId)
+    var url = Model.summaryUrl(root.selectedGame.id, root.selectedGame._lg || root.currentLeagueId)
     if (!url) return
     root.detailRefreshing = true
     detailProc.running = false; detailProc.command = ["curl", "-fsS", "--max-time", "10", "--max-filesize", Model.MAX_BYTES, url]; detailProc.running = true
@@ -393,9 +444,9 @@ Panel {
       root.detailError = root.trFn("No details"); root.detailLoading = false; return
     }
     try {
-      var r = Model.parseDetail(raw, root.selectedGame, root.currentLeagueId)
+      var r = Model.parseDetail(raw, root.selectedGame, (root.selectedGame && root.selectedGame._lg) || root.currentLeagueId)
       root.detailTeams = r.detailTeams; root.detailStats = r.detailStats; root.detailPlayers = r.detailPlayers; root.detailPlayerGroups = r.detailPlayerGroups
-      root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = (root.confGroupsLeague === root.currentLeagueId && root.confGroups) ? { groups: root.confGroups } : (r.detailStandings || null); root.detailInjuries = r.detailInjuries || []
+      root.detailLeaders = r.detailLeaders || []; root.detailPlays = r.detailPlays || []; root.detailDrives = r.detailDrives || []; root.detailStandings = (root.confGroupsLeague === ((root.selectedGame && root.selectedGame._lg) || root.currentLeagueId) && root.confGroups) ? { groups: root.confGroups } : (r.detailStandings || null); root.detailInjuries = r.detailInjuries || []
       root.detailNews = r.detailNews || []; root.detailVideos = r.detailVideos || []
       root.detailLoading = false; root.detailRefreshing = false
     } catch (e) {
@@ -444,6 +495,7 @@ Panel {
             var r = Model.parseGames(t)
             Model.noteScoreboard(root.barFeedLeague, Model.ymd(new Date()), r.games)
             root.recount()
+            if (root.favView) root.refreshFavs()
           } catch (e) {}
         }
         root.pumpBarFeed()
@@ -631,7 +683,7 @@ Panel {
     return base + (root.showOdds && g.state === "pre" && g.odds ? "  \u00b7  " + g.odds : "")
   }
   function periodChip(n) {
-    var lbl = Model.periodLabelFor(root.currentLeagueId)
+    var lbl = Model.periodLabelFor((root.selectedGame && root.selectedGame._lg) || root.currentLeagueId)
     return (lbl === "Q" && n > 4) ? (n === 5 ? "OT" : "OT" + (n - 4)) : lbl + n
   }
   function playChipText(p) {
@@ -891,7 +943,9 @@ Panel {
               spacing: Style.space(6)
               height: parent.height
               Repeater {
-                model: Model.sortedLeagues(Model.leagues, root.favorites)
+                // "★ Favorites" is an aggregate view, not a league: no
+                // league-fav star, week dots, or lastLeague persistence
+                model: [{ id: "favs", label: "\u2605 " + root.trFn("Favorites") }].concat(Model.sortedLeagues(Model.leagues, root.favorites))
                 delegate: Rectangle {
                   required property var modelData
                   width: row.implicitWidth + Style.space(16)
@@ -916,6 +970,7 @@ Panel {
                     }
                     Text {
                       textFormat: Text.PlainText
+                      visible: modelData.id !== "favs"
                       text: root.isLeagueFav(modelData.id) ? "\u2605" : "\u2606"
                       color: root.currentLeagueId == modelData.id ? Color.background : (root.isLeagueFav(modelData.id) ? Color.accent : root.fg)
                       opacity: root.isLeagueFav(modelData.id) ? 1 : 0.6
@@ -936,7 +991,7 @@ Panel {
             width: parent.width - Style.space(20)
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(4)
-            visible: root.weekDates.length === 7 && root.listVisible
+            visible: root.weekDates.length === 7 && root.listVisible && !root.favView
 
             Button {
               Layout.preferredWidth: Style.space(28)
@@ -1035,7 +1090,20 @@ Panel {
             opacity: 0.5
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
-            visible: root.weekDates.length === 7 && root.listVisible
+            visible: root.weekDates.length === 7 && root.listVisible && !root.favView
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.trFn("No favorite games today \u2014 tap \u2606 on a team to follow it")
+            visible: root.favView && root.games.length === 0 && root.listVisible
+            color: root.fg
+            opacity: 0.6
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
           }
 
           Text {
@@ -1238,11 +1306,11 @@ Panel {
                   }
                 }
                 Button {
-                  iconText: modelData && root.isFav(modelData.away.abbr) ? "\u2605" : "\u2606"
-                  foreground: modelData && root.isFav(modelData.away.abbr) ? Color.accent : root.fg
+                  iconText: modelData && root.isFav(modelData.away.abbr, modelData._lg) ? "\u2605" : "\u2606"
+                  foreground: modelData && root.isFav(modelData.away.abbr, modelData._lg) ? Color.accent : root.fg
                   accent: Color.accent
                   fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-                  onClicked: if (modelData) root.toggleFav(modelData.away.abbr)
+                  onClicked: if (modelData) root.toggleFav(modelData.away.abbr, modelData._lg)
                 }
                 Text {
                   textFormat: Text.PlainText
@@ -1295,11 +1363,11 @@ Panel {
                   }
                 }
                 Button {
-                  iconText: modelData && root.isFav(modelData.home.abbr) ? "\u2605" : "\u2606"
-                  foreground: modelData && root.isFav(modelData.home.abbr) ? Color.accent : root.fg
+                  iconText: modelData && root.isFav(modelData.home.abbr, modelData._lg) ? "\u2605" : "\u2606"
+                  foreground: modelData && root.isFav(modelData.home.abbr, modelData._lg) ? Color.accent : root.fg
                   accent: Color.accent
                   fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-                  onClicked: if (modelData) root.toggleFav(modelData.home.abbr)
+                  onClicked: if (modelData) root.toggleFav(modelData.home.abbr, modelData._lg)
                 }
                 Text {
                   textFormat: Text.PlainText
@@ -1329,7 +1397,7 @@ Panel {
                 textFormat: Text.PlainText
                 width: parent.width
                 horizontalAlignment: Text.AlignRight
-                text: root.gameStatus(modelData)
+                text: (root.favView && modelData && modelData._lg ? root.leagueLabel(modelData._lg) + " \u00b7 " : "") + root.gameStatus(modelData)
                 color: modelData ? root.statusColor(modelData.state) : root.fg
                 opacity: modelData && modelData.state === "in" ? 1.0 : 0.6
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family

@@ -38,6 +38,8 @@ var dict = {
     "All games finished \u2014 unhide them in Settings": "Todos los partidos terminaron \u2014 muéstralos en Ajustes",
     "Filter teams\u2026": "Filtrar equipos\u2026",
     "No matches for \"%1\"": "Sin resultados para \"%1\"",
+    "Favorites": "Favoritos",
+    "No favorite games today \u2014 tap \u2606 on a team to follow it": "Sin partidos de favoritos hoy \u2014 toca \u2606 en un equipo para seguirlo",
     "this day": "este día",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 comienza en %3 min",
     // detail tabs / sections
@@ -134,6 +136,8 @@ var dict = {
     "All games finished \u2014 unhide them in Settings": "Todos os jogos encerrados \u2014 reexiba-os em Configurações",
     "Filter teams\u2026": "Filtrar times\u2026",
     "No matches for \"%1\"": "Sem resultados para \"%1\"",
+    "Favorites": "Favoritos",
+    "No favorite games today \u2014 tap \u2606 on a team to follow it": "Sem jogos de favoritos hoje \u2014 toque \u2606 em um time para segui-lo",
     "this day": "este dia",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 começa em %3 min",
     // detail tabs / sections
@@ -229,6 +233,8 @@ var dict = {
     "All games finished \u2014 unhide them in Settings": "Alle wedstrijden afgelopen \u2014 maak ze zichtbaar in Instellingen",
     "Filter teams\u2026": "Teams filteren\u2026",
     "No matches for \"%1\"": "Geen resultaten voor \"%1\"",
+    "Favorites": "Favorieten",
+    "No favorite games today \u2014 tap \u2606 on a team to follow it": "Geen favoriete wedstrijden vandaag \u2014 tik \u2606 op een team om het te volgen",
     "this day": "deze dag",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 begint over %3 min",
     // detail tabs / sections
