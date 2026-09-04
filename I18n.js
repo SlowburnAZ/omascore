@@ -15,6 +15,8 @@ var dict = {
     " live": " en vivo",
     "Back": "Atrás",
     "Settings": "Ajustes",
+    "Refresh": "Actualizar",
+    "Show Today": "Mostrar hoy",
     "Retry": "Reintentar",
     // settings
     "Score notifications": "Notificaciones de puntuación",
@@ -107,6 +109,8 @@ var dict = {
     " live": " ao vivo",
     "Back": "Voltar",
     "Settings": "Configurações",
+    "Refresh": "Atualizar",
+    "Show Today": "Mostrar hoje",
     "Retry": "Tentar novamente",
     // settings
     "Score notifications": "Notificações de placar",
@@ -198,6 +202,8 @@ var dict = {
     " live": " live",
     "Back": "Terug",
     "Settings": "Instellingen",
+    "Refresh": "Vernieuwen",
+    "Show Today": "Toon vandaag",
     "Retry": "Opnieuw proberen",
     // settings
     "Score notifications": "Scoormeldingen",

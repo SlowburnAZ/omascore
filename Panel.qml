@@ -826,6 +826,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               visible: root.listVisible
               iconText: ""
+              tooltipText: root.trFn("Refresh")
               foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -838,6 +839,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               visible: root.listVisible
               iconText: ""
+              tooltipText: root.trFn("Show Today")
               foreground: root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -851,6 +853,7 @@ Panel {
               anchors.rightMargin: -settingsButton.horizontalPadding
               anchors.verticalCenter: parent.verticalCenter
               iconText: "\uf013"
+              tooltipText: root.trFn("Settings")
               foreground: root.showSettings ? Color.accent : root.fg
               accent: Color.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
