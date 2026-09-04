@@ -131,6 +131,42 @@ Panel {
     var e = root.favLiveGame
     return e ? Model.leagueFor(e.lg).label + " \u00b7 " + e.g.away.abbr + " " + (e.g.away.score || "0") + " \u2014 " + e.g.home.abbr + " " + (e.g.home.score || "0") + " \u00b7 " + e.g.detail : ""
   }
+  // Next upcoming favorite game today across covered leagues (earliest start).
+  // Static start time, not a ticking countdown: bindings with `new Date()`
+  // never re-evaluate, and a stale "in 2h" misleads worse than a fixed time.
+  readonly property var nextFavGame: {
+    var best = null
+    var slots = root.barSlots()
+    for (var i = 0; i < slots.length; i++) {
+      var games = slots[i].games
+      for (var j = 0; j < games.length; j++) {
+        var g = games[j]
+        if (!g || !g.away || !g.home || g.state !== "pre" || !g.date) continue
+        if (!(Model.isFav(root.favorites, g.away.abbr, slots[i].lg) || Model.isFav(root.favorites, g.home.abbr, slots[i].lg))) continue
+        var t = new Date(g.date).getTime()
+        if (isNaN(t)) continue
+        if (!best || t < best.t) best = { g: g, lg: slots[i].lg, t: t }
+      }
+    }
+    return best
+  }
+  readonly property string nextFavTime: {
+    var e = root.nextFavGame
+    if (!e) return ""
+    var d = new Date(e.g.date)
+    return isNaN(d.getTime()) ? "" : Qt.formatDateTime(d, "h:mm AP")
+  }
+  readonly property string nextFavScore: {
+    var e = root.nextFavGame
+    if (!e || root.nextFavTime === "") return ""
+    var abbr = Model.isFav(root.favorites, e.g.away.abbr, e.lg) ? e.g.away.abbr : e.g.home.abbr
+    return abbr + " " + root.nextFavTime
+  }
+  readonly property string nextFavLabel: {
+    var e = root.nextFavGame
+    if (!e || root.nextFavTime === "") return ""
+    return Model.leagueFor(e.lg).label + " \u00b7 " + e.g.away.abbr + " @ " + e.g.home.abbr + " \u00b7 " + root.nextFavTime
+  }
   readonly property bool notifyEnabled: {
     var w = root.hostWidget
     if (!w || typeof w.setting !== "function") return true
@@ -1503,6 +1539,7 @@ Panel {
               options: [
                 { value: "favScore", label: "Favorite score" },
                 { value: "liveCount", label: "Live count" },
+                { value: "nextGame", label: "Next game" },
                 { value: "icon", label: "Icon only" }
               ]
               foreground: root.fg
