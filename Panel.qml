@@ -160,7 +160,7 @@ Panel {
     var e = root.nextFavGame
     if (!e) return ""
     var d = new Date(e.g.date)
-    return isNaN(d.getTime()) ? "" : Qt.formatDateTime(d, "h:mm AP")
+    return isNaN(d.getTime()) ? "" : Qt.formatTime(d, Qt.DefaultLocaleShortTime)
   }
   readonly property string nextFavScore: {
     var e = root.nextFavGame
@@ -723,7 +723,7 @@ Panel {
   }
   function gameStatus(g) {
     if (!g) return ""
-    var base = (g.state === "pre" && g.date) ? Qt.formatDateTime(new Date(g.date), "M/d - h:mm AP") : (g.detail || "")
+    var base = (g.state === "pre" && g.date) ? Qt.formatDateTime(new Date(g.date), Qt.DefaultLocaleShortDate) : (g.detail || "")
     return base + (root.showOdds && g.state === "pre" && g.odds ? "  \u00b7  " + g.odds : "")
   }
   function periodChip(n) {
