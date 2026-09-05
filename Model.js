@@ -199,14 +199,16 @@ function scoreEvent(prev, g) {
     return scoreChanged ? "score" : null
 }
 
-// Minutes until kickoff when a pre-game reminder should fire (inside the 10-minute
-// window), else -1. state comes from ESPN ("pre"|"in"|"post").
-function kickoffMinutes(dateStr, state, now) {
+// Minutes until kickoff when a pre-game reminder should fire (inside the
+// window), else -1. state comes from ESPN ("pre"|"in"|"post"). Window
+// defaults to 10 for the legacy 3-arg call shape.
+function kickoffMinutes(dateStr, state, now, window) {
     if (state !== "pre" || !dateStr) return -1
     var t = new Date(dateStr)
     if (isNaN(t.getTime())) return -1
     var mins = Math.round((t.getTime() - now.getTime()) / 60000)
-    return (mins > 0 && mins <= 10) ? mins : -1
+    var win = (window === undefined || window === null) ? 10 : window
+    return (mins > 0 && mins <= win) ? mins : -1
 }
 
 function statusColor(state, urgent, defCol) { return state === "in" ? urgent : defCol }
@@ -707,7 +709,19 @@ function parseDetail(raw, selectedGame, leagueId) {
         }
         for (var gi = 0; gi < order.length; gi++) groups.push(groupMap[order[gi]])
     }
+    // Matchup Predictor (pre-game win chances). Shape verified against live
+    // payloads: { homeTeam: { gameProjection: "66.1" }, awayTeam: {...} }.
+    // Only trusted when the two projections sum to ~100 — anything else means
+    // ESPN changed the semantics and the numbers must not render as chances.
+    var detailPredictor = null
+    var pred = (d.predictor && typeof d.predictor === "object") ? d.predictor : null
+    if (pred && pred.homeTeam && pred.awayTeam) {
+        var hp = parseFloat(pred.homeTeam.gameProjection), ap = parseFloat(pred.awayTeam.gameProjection)
+        if (!isNaN(hp) && !isNaN(ap) && hp + ap >= 98 && hp + ap <= 102)
+            detailPredictor = { awayPct: Math.round(Math.max(0, Math.min(100, ap))), homePct: Math.round(Math.max(0, Math.min(100, hp))) }
+    }
     return { detailTeams: detailTeams, detailStats: paired, detailPlayers: detailPlayers, detailPlayerGroups: groups,
+        detailPredictor: detailPredictor,
         detailLeaders: detailLeaders, detailPlays: detailPlays, detailDrives: detailDrives, detailStandings: detailStandings, detailInjuries: detailInjuries,
         detailNews: detailNews, detailVideos: detailVideos }
 }
