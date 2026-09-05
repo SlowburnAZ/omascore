@@ -639,7 +639,22 @@ function parseDetail(raw, selectedGame, leagueId) {
     var detailStandings = d.standings ? sanitize(d.standings, MAX_LIST, MAX_STR) : null
     var detailNews = (d.news && Array.isArray(d.news.articles)) ? sanitize(d.news.articles.slice(0, 3), 8, MAX_STR) : []
     var detailVideos = Array.isArray(d.videos) ? sanitize(d.videos.slice(0, 2), 4, MAX_STR) : []
-    var detailTeams = { away: away, home: home, venue: clip(venue, 200), addr: clip(addr, 200), status: clip(stType.detail, 100), situation: clip(sit, 120) }
+    // Where to watch: summary d.broadcasts is {type:{shortName}, station, media}.
+    // Dedup stations (markets/langs repeat them), cap the list, and join as
+    // "TV: USA Net · Streaming: Apple TV".
+    var bcastParts = []
+    var seenStations = {}
+    var bl = Array.isArray(d.broadcasts) ? d.broadcasts.slice(0, 6) : []
+    for (var bi = 0; bi < bl.length && bcastParts.length < 4; bi++) {
+        var bb = bl[bi] || {}
+        var st = clip(bb.station || (bb.media ? (bb.media.shortName || bb.media.callLetters || bb.media.name) : ""), 40)
+        if (!st || seenStations[st]) continue
+        seenStations[st] = true
+        var ty = bb.type ? (bb.type.shortName || bb.type.longName || "") : ""
+        var tyTxt = ty === "" ? "" : (ty.toUpperCase() === "TV" ? "TV" : titleize(ty)) + ": "
+        bcastParts.push(tyTxt + st)
+    }
+    var detailTeams = { away: away, home: home, venue: clip(venue, 200), addr: clip(addr, 200), status: clip(stType.detail, 100), situation: clip(sit, 120), broadcast: clip(bcastParts.join(" \u00b7 "), 160) }
     var detailPlayers = (Array.isArray(box.players) && box.players.length) ? box.players.slice(0, 8).map(function(te) {
         return { team: { abbreviation: clip(te.team ? te.team.abbreviation : "", 16) }, statistics: (Array.isArray(te.statistics) ? te.statistics : []).slice(0, MAX_STATS).map(function(sc) { return { labels: sanitize(Array.isArray(sc.labels) ? sc.labels : [], MAX_STATS, 60) } }) }
     }) : null
