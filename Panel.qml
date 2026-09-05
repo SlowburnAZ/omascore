@@ -1817,6 +1817,18 @@ Panel {
             }
             Text {
               textFormat: Text.PlainText
+              visible: root.detailTeams && root.detailTeams.broadcast
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: root.detailTeams ? root.detailTeams.broadcast : ""
+              color: root.fg
+              opacity: 0.5
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            Text {
+              textFormat: Text.PlainText
               visible: root.detailTeams && root.detailTeams.situation !== ""
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
