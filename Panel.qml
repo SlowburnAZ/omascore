@@ -1333,6 +1333,18 @@ Panel {
             text: root.filterText
             onTextChanged: root.filterText = text
             onAccepted: filterField.focus = false
+            // Security: foreign clipboard content must never enter the shell
+            // unbounded — Qt reads a paste offer synchronously with no size
+            // or time limit, so a hostile clipboard owner could stall the
+            // shell. Paste shortcuts are swallowed here (typing still works);
+            // maximumLength bounds whatever text the field ever holds.
+            maximumLength: 64
+            Keys.onPressed: function(event) {
+              if ((event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) ||
+                  (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
+                event.accepted = true
+              }
+            }
             foreground: root.fg
             accent: Color.accent
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
