@@ -272,8 +272,13 @@ Panel {
   readonly property int todayIndex: root.weekDateStrs.indexOf(root.todayYmd)
   readonly property var dayLabels: root.langRev >= 0 ? Model.dayLabels.map(function(d) { return I18n.tr(d) }) : []
   property var monthLabels: Model.monthLabels
-  // week fetch: one week-range scoreboard request, dots computed locally
+  // Week dots: seven sequential single-day scoreboard fetches (ESPN has no
+  // working date-range syntax), pumped one at a time so at most one is ever
+  // in flight. Results land progressively — dots appear day by day.
   property string weekFetchLeague: ""
+  property var weekQueue: []          // entries {idx, dateStr} still to scan
+  property int weekDayIdx: -1         // day index of the in-flight scan fetch
+  property var weekDotsCache: ({})    // "leagueId|weekStartStr" -> hasGames
 
   property var selectedGame: null
   property var detailStats: null
@@ -392,10 +397,41 @@ Panel {
   function checkWeekGames() {
     if (root.favView) return
     if (!root.weekDateStrs || root.weekDateStrs.length !== 7) return
-    var args = Model.weekArgs(root.weekDateStrs, root.currentLeagueId)
-    if (!args) return
+    var key = root.currentLeagueId + "|" + root.weekDateStrs[0]
+    if (root.weekDotsCache[key]) {
+      root.hasGames = root.weekDotsCache[key].slice()
+      return
+    }
     root.weekFetchLeague = root.currentLeagueId
-    weekProc.running = false; weekProc.command = args; weekProc.running = true
+    root.hasGames = [false,false,false,false,false,false,false]
+    var queue = []
+    for (var i = 0; i < 7; i++) {
+      if (Model.fetchArgs(root.weekDateStrs[i], root.currentLeagueId)) queue.push({ idx: i, dateStr: root.weekDateStrs[i] })
+    }
+    root.weekQueue = queue
+    root.pumpWeek()
+  }
+  // Next scan day, or — when the queue drained — cache the dots. The
+  // selection stays where the user put it: an empty day shows
+  // "No games X — next up Y" instead of yanking the selector elsewhere.
+  // Abandoned scans (league switched mid-scan) exit without touching state.
+  function pumpWeek() {
+    if (root.weekFetchLeague !== root.currentLeagueId) { root.weekQueue = []; return }
+    if (weekDayProc.running || root.weekQueue.length === 0) {
+      if (root.weekQueue.length === 0 && root.weekFetchLeague === root.currentLeagueId) {
+        var key = root.currentLeagueId + "|" + (root.weekDateStrs[0] || "")
+        root.weekDotsCache[key] = root.hasGames.slice()
+        var keys = Object.keys(root.weekDotsCache)
+        if (keys.length > 8) delete root.weekDotsCache[keys[0]]
+        console.log("OmaScore: week scan done for", root.weekFetchLeague, JSON.stringify(root.hasGames))
+      }
+      return
+    }
+    var next = root.weekQueue.shift()
+    root.weekDayIdx = next.idx
+    weekDayProc.running = false
+    weekDayProc.command = Model.fetchArgs(next.dateStr, root.weekFetchLeague)
+    weekDayProc.running = true
   }
   function refreshSelected() {
     // favs view paints today's favorites from the shared board and tops up
@@ -776,7 +812,7 @@ Panel {
   }
 
   Process {
-    id: weekProc
+    id: weekDayProc
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
