@@ -1324,30 +1324,75 @@ Panel {
             font.pixelSize: Style.font.body
           }
 
-          TextField {
+          // Team filter WITHOUT any Qt text-editing native code: a plain Item
+          // renders the query and appends keystrokes itself, so no clipboard
+          // path (keyboard paste, middle-click paste, selection reads) can
+          // exist here at all. Typing appends (capped at 64 chars),
+          // Backspace deletes, Enter drops focus; IME composition is not
+          // supported in this field.
+          Item {
             id: filterField
             width: parent.width
             visible: root.listVisible && root.shownGames.length > 1
+            implicitHeight: Style.space(30)
             height: visible ? implicitHeight : 0
-            placeholderText: root.trFn("Filter teams\u2026")
-            text: root.filterText
-            onTextChanged: root.filterText = text
-            onAccepted: filterField.focus = false
-            // Security: foreign clipboard content must never enter the shell
-            // unbounded — Qt reads a paste offer synchronously with no size
-            // or time limit, so a hostile clipboard owner could stall the
-            // shell. Paste shortcuts are swallowed here (typing still works);
-            // maximumLength bounds whatever text the field ever holds.
-            maximumLength: 64
+            clip: true
+            readonly property bool fieldHot: fieldHover.hovered || activeFocus
+            readonly property var fieldBorder: Border.controlSpec(activeFocus ? "focus" : (fieldHot ? "hover-cursor" : "normal"), root.fg, Color.accent)
+
             Keys.onPressed: function(event) {
-              if ((event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) ||
-                  (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
+              if (event.key === Qt.Key_Backspace) {
+                root.filterText = root.filterText.slice(0, -1)
+                event.accepted = true
+              } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                filterField.focus = false
+                event.accepted = true
+              } else if (event.text !== "") {
+                root.filterText = (root.filterText + event.text).slice(0, 64)
                 event.accepted = true
               }
             }
-            foreground: root.fg
-            accent: Color.accent
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+
+            BorderSurface {
+              anchors.fill: parent
+              color: Style.controlFill(filterField.activeFocus, filterField.fieldHot, root.fg, Color.accent)
+              borderSpec: filterField.fieldBorder
+              radius: Style.cornerRadius
+            }
+            Row {
+              anchors.fill: parent
+              anchors.leftMargin: Style.spacing.controlPaddingX
+              anchors.rightMargin: Style.spacing.controlPaddingX
+              spacing: 2
+              Text {
+                textFormat: Text.PlainText
+                width: Math.min(implicitWidth, parent.width - 4)
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.filterText !== "" ? root.filterText : root.trFn("Filter teams\u2026")
+                color: root.filterText !== "" ? root.fg : Qt.darker(root.fg, 1.6)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+              }
+              Rectangle {
+                width: 2
+                height: Style.space(14)
+                anchors.verticalCenter: parent.verticalCenter
+                visible: filterField.activeFocus
+                color: root.fg
+                SequentialAnimation on opacity {
+                  running: filterField.activeFocus
+                  loops: Animation.Infinite
+                  NumberAnimation { to: 0.2; duration: 530 }
+                  NumberAnimation { to: 1; duration: 530 }
+                }
+              }
+            }
+            HoverHandler { id: fieldHover }
+            MouseArea {
+              anchors.fill: parent
+              onClicked: filterField.forceActiveFocus()
+            }
           }
 
           Text {
