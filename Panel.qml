@@ -134,7 +134,9 @@ Panel {
   }
   readonly property string favLiveLabel: {
     var e = root.favLiveGame
-    return e ? Model.leagueFor(e.lg).label + " \u00b7 " + e.g.away.abbr + " " + (e.g.away.score || "0") + " \u2014 " + e.g.home.abbr + " " + (e.g.home.score || "0") + " \u00b7 " + e.g.detail : ""
+    if (!e) return ""
+    var f = root.firstSide(e.lg), s = root.secondSide(e.lg)
+    return Model.leagueFor(e.lg).label + " \u00b7 " + e.g[f].abbr + " " + (e.g[f].score || "0") + " \u2014 " + e.g[s].abbr + " " + (e.g[s].score || "0") + " \u00b7 " + e.g.detail
   }
   // Next upcoming favorite game today across covered leagues (earliest start).
   // Static start time, not a ticking countdown: bindings with `new Date()`
@@ -171,7 +173,8 @@ Panel {
   readonly property string nextFavLabel: {
     var e = root.nextFavGame
     if (!e || root.nextFavTime === "") return ""
-    return Model.leagueFor(e.lg).label + " \u00b7 " + e.g.away.abbr + " @ " + e.g.home.abbr + " \u00b7 " + root.nextFavTime
+    var f = root.firstSide(e.lg), s = root.secondSide(e.lg)
+    return Model.leagueFor(e.lg).label + " \u00b7 " + e.g[f].abbr + " " + root.orderSep(e.lg) + " " + e.g[s].abbr + " \u00b7 " + root.nextFavTime
   }
   readonly property bool notifyEnabled: {
     var w = root.hostWidget
@@ -217,6 +220,24 @@ Panel {
     var v = (w && typeof w.setting === "function") ? w.setting("barMode", "favScore") : "favScore"
     return String(v || "favScore")
   }
+  // Team display order: plugin setting "teamOrder" (auto|away|home).
+  // "auto" follows each sport's native convention (Model.teamOrderDefault:
+  // soccer home-first, US leagues away-first); the other values force it.
+  function currentTeamOrder() {
+    var w = root.hostWidget
+    var v = (w && typeof w.setting === "function") ? w.setting("teamOrder", "auto") : "auto"
+    v = String(v || "auto")
+    return (v === "away" || v === "home") ? v : "auto"
+  }
+  // First-displayed side ("away"|"home") for a league, preference applied.
+  function firstSide(lg) {
+    var pref = root.currentTeamOrder()
+    if (pref === "away" || pref === "home") return pref
+    return Model.teamOrderDefault(lg || root.currentLeagueId)
+  }
+  function secondSide(lg) { return root.firstSide(lg) === "away" ? "home" : "away" }
+  // Matchup separator follows the effective order: home-first reads "v".
+  function orderSep(lg) { return root.firstSide(lg) === "home" ? "v" : "@" }
   property string lastError: ""
 
   // Favorites persist in dconf (see saveFavorites); the pre-dconf state files
@@ -298,6 +319,11 @@ Panel {
   property bool detailStale: false
   property string detailError: ""
   property int detailTab: 0
+  // Detail display order follows firstSide/secondSide for the viewed game's
+  // league (favs-view games carry their own _lg).
+  readonly property string detailLeague: (root.selectedGame && root.selectedGame._lg) || root.currentLeagueId
+  readonly property string detailFirst: root.firstSide(root.detailLeague)
+  readonly property string detailSecond: root.secondSide(root.detailLeague)
 
   function switchPanel(direction) {
     if (root.bar && typeof root.bar.switchPanelFrom === "function")
@@ -712,9 +738,11 @@ Panel {
       if (!(root.isFav(g.away.abbr) || root.isFav(g.home.abbr))) continue
       var koMin = root.kickoffWindow > 0 ? Model.kickoffMinutes(g.date, g.state, new Date(), root.kickoffWindow) : -1
       if (koMin > 0 && !Model.kickoffNotified[g.id] && !notifProc.running) {
+        var kf = root.firstSide(), ks = root.secondSide()
+        var koKey = root.orderSep() === "v" ? "%1 v %2 kicks off in %3 min" : "%1 @ %2 kicks off in %3 min"
         root.requestNotification("ko|" + root.currentLeagueId + "|" + g.id + "|" + koMin,
           ["notify-send", "-a", "OmaScore",
-            root.trFn("%1 @ %2 kicks off in %3 min", g.away.abbr, g.home.abbr, koMin),
+            root.trFn(koKey, g[kf].abbr, g[ks].abbr, koMin),
             root.leagueLabel(root.currentLeagueId) + " \u00b7 " + root.gameStatus(g)], g.id)
       }
       if (old === undefined || old === cur) continue
@@ -722,13 +750,14 @@ Panel {
       if (!ev) continue
       if (root.notifyFinalsOnly && ev !== "final") continue
       if (notifProc.running) continue
+      var nf = root.firstSide(), ns = root.secondSide()
       root.requestNotification(root.currentLeagueId + "|" + g.id + "|" + ev + "|" + (g.away.score || "") + "|" + (g.home.score || ""),
         ev === "final"
         ? ["notify-send", "-a", "OmaScore",
-            "Final \u2014 " + g.away.abbr + " " + (g.away.score || "0") + " \u00b7 " + g.home.abbr + " " + (g.home.score || "0"),
+            "Final \u2014 " + g[nf].abbr + " " + (g[nf].score || "0") + " \u00b7 " + g[ns].abbr + " " + (g[ns].score || "0"),
             root.leagueLabel(root.currentLeagueId) + " \u00b7 " + (g.detail || "")]
         : ["notify-send", "-a", "OmaScore",
-            g.away.abbr + " " + (g.away.score || "0") + " \u2014 " + g.home.abbr + " " + (g.home.score || "0"),
+            g[nf].abbr + " " + (g[nf].score || "0") + " \u2014 " + g[ns].abbr + " " + (g[ns].score || "0"),
             root.leagueLabel(root.currentLeagueId) + " \u00b7 " + g.detail])
     }
     root.prevScores = next
@@ -817,12 +846,21 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         // abandon a scan for a league we've already left
-        if (root.weekFetchLeague !== root.currentLeagueId) return
+        if (root.weekFetchLeague !== root.currentLeagueId) { root.weekQueue = []; return }
+        weekDayProc.running = false
         var t = root.gated(text)
-        if (t === null) return
-        root.hasGames = Model.parseWeekRange(t, root.weekDateStrs)
-        var nxt = Model.nextSelectedDay(root.hasGames, root.selectedDay)
-        if (nxt >= 0) { root.selectedDay = nxt; root.refreshSelected() }
+        // one bad day must not stall the other six: skip it and keep pumping
+        if (t !== null && t.trim() && root.weekDayIdx >= 0 && root.weekDayIdx < 7) {
+          try {
+            var r = Model.parseGames(t)
+            var h = root.hasGames.slice()
+            h[root.weekDayIdx] = r.games.length > 0
+            root.hasGames = h
+          } catch (e) {
+            console.log("OmaScore: week scan parse failed for", root.weekFetchLeague, root.weekDayIdx)
+          }
+        }
+        root.pumpWeek()
       }
     }
   }
@@ -1333,8 +1371,12 @@ Panel {
               required property int index
               readonly property var modelData: game
               readonly property bool isFinal: modelData && modelData.state === "post"
-              readonly property bool awayLeads: modelData ? root.leads(modelData, "away") : false
-              readonly property bool homeLeads: modelData ? root.leads(modelData, "home") : false
+              // Display order follows the sport convention / teamOrder setting:
+              // first row reads firstSide, second row secondSide.
+              readonly property string firstSide: root.firstSide(modelData._lg || root.currentLeagueId)
+              readonly property string secondSide: root.secondSide(modelData._lg || root.currentLeagueId)
+              readonly property bool firstLeads: modelData ? root.leads(modelData, firstSide) : false
+              readonly property bool secondLeads: modelData ? root.leads(modelData, secondSide) : false
               visible: root.listVisible
               width: parent.width
               spacing: Style.space(4)
@@ -1389,10 +1431,10 @@ Panel {
               RowLayout {
                 width: parent.width
                 spacing: Style.spacing.controlGap
-                visible: modelData && modelData.away
+                visible: modelData && modelData[firstSide]
                 Rectangle {
-                  visible: modelData && (modelData.away.logo || "") !== ""
-                  opacity: isFinal && homeLeads ? 0.45 : 1
+                  visible: modelData && (modelData[firstSide].logo || "") !== ""
+                  opacity: isFinal && secondLeads ? 0.45 : 1
                   width: Style.space(20)
                   height: Style.space(20)
                   Layout.preferredWidth: Style.space(20)
@@ -1403,40 +1445,40 @@ Panel {
                   clip: true
 
                   Image {
-                    id: awayLogo
+                    id: firstLogo
                     anchors.fill: parent
                     asynchronous: true
                     cache: true
                     fillMode: Image.PreserveAspectFit
                     sourceSize.width: 40
-                    source: Model.safeMedia(modelData && modelData.away ? modelData.away.logo : "")
+                    source: Model.safeMedia(modelData && modelData[firstSide] ? modelData[firstSide].logo : "")
                   }
                 }
                 Button {
-                  iconText: modelData && root.isFav(modelData.away.abbr, modelData._lg) ? "\u2605" : "\u2606"
-                  foreground: modelData && root.isFav(modelData.away.abbr, modelData._lg) ? Color.accent : root.fg
+                  iconText: modelData && root.isFav(modelData[firstSide].abbr, modelData._lg) ? "\u2605" : "\u2606"
+                  foreground: modelData && root.isFav(modelData[firstSide].abbr, modelData._lg) ? Color.accent : root.fg
                   accent: Color.accent
                   fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-                  onClicked: if (modelData) root.toggleFav(modelData.away.abbr, modelData._lg)
+                  onClicked: if (modelData) root.toggleFav(modelData[firstSide].abbr, modelData._lg)
                 }
                 Text {
                   textFormat: Text.PlainText
                   Layout.fillWidth: true
-                  text: modelData ? modelData.away.abbr + "   " + modelData.away.name : ""
+                  text: modelData ? modelData[firstSide].abbr + "   " + modelData[firstSide].name : ""
                   color: root.fg
-                  opacity: isFinal && homeLeads ? 0.45 : 1
+                  opacity: isFinal && secondLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
-                  font.bold: modelData && root.leads(modelData, "away")
+                  font.bold: modelData && root.leads(modelData, firstSide)
                   elide: Text.ElideRight
-                  HoverHandler { id: hoverGameAway }
-                  PanelToolTip { visible: hoverGameAway.hovered && parent.truncated; text: parent.text }
+                  HoverHandler { id: hoverGameFirst }
+                  PanelToolTip { visible: hoverGameFirst.hovered && parent.truncated; text: parent.text }
                 }
                 Text {
                   textFormat: Text.PlainText
-                  text: modelData && modelData.away ? modelData.away.score || "-" : "-"
-                  color: modelData && root.leads(modelData, "away") ? Color.accent : root.fg
-                  opacity: isFinal && homeLeads ? 0.45 : 1
+                  text: modelData && modelData[firstSide] ? modelData[firstSide].score || "-" : "-"
+                  color: modelData && root.leads(modelData, firstSide) ? Color.accent : root.fg
+                  opacity: isFinal && secondLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: true
@@ -1446,10 +1488,10 @@ Panel {
               RowLayout {
                 width: parent.width
                 spacing: Style.spacing.controlGap
-                visible: modelData && modelData.home
+                visible: modelData && modelData[secondSide]
                 Rectangle {
-                  visible: modelData && (modelData.home.logo || "") !== ""
-                  opacity: isFinal && awayLeads ? 0.45 : 1
+                  visible: modelData && (modelData[secondSide].logo || "") !== ""
+                  opacity: isFinal && firstLeads ? 0.45 : 1
                   width: Style.space(20)
                   height: Style.space(20)
                   Layout.preferredWidth: Style.space(20)
@@ -1460,40 +1502,40 @@ Panel {
                   clip: true
 
                   Image {
-                    id: homeLogo
+                    id: secondLogo
                     anchors.fill: parent
                     asynchronous: true
                     cache: true
                     fillMode: Image.PreserveAspectFit
                     sourceSize.width: 40
-                    source: Model.safeMedia(modelData && modelData.home ? modelData.home.logo : "")
+                    source: Model.safeMedia(modelData && modelData[secondSide] ? modelData[secondSide].logo : "")
                   }
                 }
                 Button {
-                  iconText: modelData && root.isFav(modelData.home.abbr, modelData._lg) ? "\u2605" : "\u2606"
-                  foreground: modelData && root.isFav(modelData.home.abbr, modelData._lg) ? Color.accent : root.fg
+                  iconText: modelData && root.isFav(modelData[secondSide].abbr, modelData._lg) ? "\u2605" : "\u2606"
+                  foreground: modelData && root.isFav(modelData[secondSide].abbr, modelData._lg) ? Color.accent : root.fg
                   accent: Color.accent
                   fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-                  onClicked: if (modelData) root.toggleFav(modelData.home.abbr, modelData._lg)
+                  onClicked: if (modelData) root.toggleFav(modelData[secondSide].abbr, modelData._lg)
                 }
                 Text {
                   textFormat: Text.PlainText
                   Layout.fillWidth: true
-                  text: modelData ? modelData.home.abbr + "   " + modelData.home.name : ""
+                  text: modelData ? modelData[secondSide].abbr + "   " + modelData[secondSide].name : ""
                   color: root.fg
-                  opacity: isFinal && awayLeads ? 0.45 : 1
+                  opacity: isFinal && firstLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
-                  font.bold: modelData && root.leads(modelData, "home")
+                  font.bold: modelData && root.leads(modelData, secondSide)
                   elide: Text.ElideRight
-                  HoverHandler { id: hoverGameHome }
-                  PanelToolTip { visible: hoverGameHome.hovered && parent.truncated; text: parent.text }
+                  HoverHandler { id: hoverGameSecond }
+                  PanelToolTip { visible: hoverGameSecond.hovered && parent.truncated; text: parent.text }
                 }
                 Text {
                   textFormat: Text.PlainText
-                  text: modelData && modelData.home ? modelData.home.score || "-" : "-"
-                  color: modelData && root.leads(modelData, "home") ? Color.accent : root.fg
-                  opacity: isFinal && awayLeads ? 0.45 : 1
+                  text: modelData && modelData[secondSide] ? modelData[secondSide].score || "-" : "-"
+                  color: modelData && root.leads(modelData, secondSide) ? Color.accent : root.fg
+                  opacity: isFinal && firstLeads ? 0.45 : 1
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
                   font.bold: true
@@ -1637,6 +1679,21 @@ Panel {
               onChanged: function(v) { root.setSetting("barMode", v) }
             }
 
+            Dropdown {
+              width: parent.width
+              label: root.trFn("Team order")
+              value: root.currentTeamOrder()
+              options: [
+                { value: "auto", label: "Automatic (per sport)" },
+                { value: "away", label: "Away first" },
+                { value: "home", label: "Home first" }
+              ]
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onChanged: function(v) { root.setSetting("teamOrder", v) }
+            }
+
             PanelSeparator { foreground: root.fg }
 
             PanelSectionHeader {
@@ -1685,15 +1742,15 @@ Panel {
                 spacing: Style.space(6)
                 Text {
                   textFormat: Text.PlainText
-                  text: root.selectedGame ? root.selectedGame.away.abbr : ""
-                  color: root.selectedGame && (root.selectedGame.away.color || "") !== "" ? root.teamColor(root.selectedGame.away.color) : root.fg
+                  text: root.selectedGame ? root.selectedGame[root.detailFirst].abbr : ""
+                  color: root.selectedGame && (root.selectedGame[root.detailFirst].color || "") !== "" ? root.teamColor(root.selectedGame[root.detailFirst].color) : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
                 }
                 Text {
                   textFormat: Text.PlainText
-                  text: "@"
+                  text: root.orderSep(root.detailLeague)
                   color: root.fg
                   opacity: 0.5
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1702,8 +1759,8 @@ Panel {
                 }
                 Text {
                   textFormat: Text.PlainText
-                  text: root.selectedGame ? root.selectedGame.home.abbr : ""
-                  color: root.selectedGame && (root.selectedGame.home.color || "") !== "" ? root.teamColor(root.selectedGame.home.color) : root.fg
+                  text: root.selectedGame ? root.selectedGame[root.detailSecond].abbr : ""
+                  color: root.selectedGame && (root.selectedGame[root.detailSecond].color || "") !== "" ? root.teamColor(root.selectedGame[root.detailSecond].color) : root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
@@ -1731,7 +1788,7 @@ Panel {
                   width: Style.space(32); height: Style.space(32); radius: Style.space(6); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
                   Image {
                     anchors.fill: parent
-                    source: Model.safeMedia(root.detailTeams && root.detailTeams.away ? root.detailTeams.away.logo : "")
+                    source: Model.safeMedia(root.detailTeams && root.detailTeams[root.detailFirst] ? root.detailTeams[root.detailFirst].logo : "")
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
@@ -1741,13 +1798,13 @@ Panel {
                 Rectangle {
                   anchors.horizontalCenter: parent.horizontalCenter
                   width: 36; height: 3; radius: 1.5
-                  visible: root.detailTeams && root.detailTeams.away && (root.detailTeams.away.color || "") !== ""
-                  color: root.detailTeams && root.detailTeams.away ? root.teamColor(root.detailTeams.away.color) : Color.accent
+                  visible: root.detailTeams && root.detailTeams[root.detailFirst] && (root.detailTeams[root.detailFirst].color || "") !== ""
+                  color: root.detailTeams && root.detailTeams[root.detailFirst] ? root.teamColor(root.detailTeams[root.detailFirst].color) : Color.accent
                 }
                 Text {
                   textFormat: Text.PlainText
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.abbr : ""
+                  text: root.detailTeams && root.detailTeams[root.detailFirst] ? root.detailTeams[root.detailFirst].abbr : ""
                   color: root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.bodySmall
@@ -1758,16 +1815,16 @@ Panel {
                   spacing: Style.space(6)
                   Text {
                     textFormat: Text.PlainText
-                    text: root.selectedGame && root.selectedGame.away ? root.selectedGame.away.score : ""
-                    color: root.detailFlashing || root.leads(root.selectedGame, "away") ? Color.accent : root.fg
+                    text: root.selectedGame && root.selectedGame[root.detailFirst] ? root.selectedGame[root.detailFirst].score : ""
+                    color: root.detailFlashing || root.leads(root.selectedGame, root.detailFirst) ? Color.accent : root.fg
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
                   }
                   Text {
                     textFormat: Text.PlainText
-                    visible: root.selectedGame && root.selectedGame.away && root.selectedGame.away.record
-                    text: root.selectedGame && root.selectedGame.away ? "(" + root.selectedGame.away.record + ")" : ""
+                    visible: root.selectedGame && root.selectedGame[root.detailFirst] && root.selectedGame[root.detailFirst].record
+                    text: root.selectedGame && root.selectedGame[root.detailFirst] ? "(" + root.selectedGame[root.detailFirst].record + ")" : ""
                     color: root.fg
                     opacity: 0.45
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1777,8 +1834,8 @@ Panel {
                 }
                 Text {
                   textFormat: Text.PlainText
-                  visible: root.detailTeams && root.detailTeams.away && root.detailTeams.away.name
-                  text: root.detailTeams && root.detailTeams.away ? root.detailTeams.away.name : ""
+                  visible: root.detailTeams && root.detailTeams[root.detailFirst] && root.detailTeams[root.detailFirst].name
+                  text: root.detailTeams && root.detailTeams[root.detailFirst] ? root.detailTeams[root.detailFirst].name : ""
                   color: root.fg
                   opacity: 0.45
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1786,8 +1843,8 @@ Panel {
                   elide: Text.ElideRight
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
-                  HoverHandler { id: hoverDetailAway }
-                  PanelToolTip { visible: hoverDetailAway.hovered && parent.truncated; text: parent.text }
+                  HoverHandler { id: hoverDetailFirst }
+                  PanelToolTip { visible: hoverDetailFirst.hovered && parent.truncated; text: parent.text }
                 }
               }
               Rectangle {
@@ -1805,7 +1862,7 @@ Panel {
                   width: Style.space(32); height: Style.space(32); radius: Style.space(6); color: "transparent"; clip: true; anchors.horizontalCenter: parent.horizontalCenter
                   Image {
                     anchors.fill: parent
-                    source: Model.safeMedia(root.detailTeams && root.detailTeams.home ? root.detailTeams.home.logo : "")
+                    source: Model.safeMedia(root.detailTeams && root.detailTeams[root.detailSecond] ? root.detailTeams[root.detailSecond].logo : "")
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
@@ -1815,13 +1872,13 @@ Panel {
                 Rectangle {
                   anchors.horizontalCenter: parent.horizontalCenter
                   width: 36; height: 3; radius: 1.5
-                  visible: root.detailTeams && root.detailTeams.home && (root.detailTeams.home.color || "") !== ""
-                  color: root.detailTeams && root.detailTeams.home ? root.teamColor(root.detailTeams.home.color) : Color.accent
+                  visible: root.detailTeams && root.detailTeams[root.detailSecond] && (root.detailTeams[root.detailSecond].color || "") !== ""
+                  color: root.detailTeams && root.detailTeams[root.detailSecond] ? root.teamColor(root.detailTeams[root.detailSecond].color) : Color.accent
                 }
                 Text {
                   textFormat: Text.PlainText
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.abbr : ""
+                  text: root.detailTeams && root.detailTeams[root.detailSecond] ? root.detailTeams[root.detailSecond].abbr : ""
                   color: root.fg
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.bodySmall
@@ -1832,16 +1889,16 @@ Panel {
                   spacing: Style.space(6)
                   Text {
                     textFormat: Text.PlainText
-                    text: root.selectedGame && root.selectedGame.home ? root.selectedGame.home.score : ""
-                    color: root.detailFlashing || root.leads(root.selectedGame, "home") ? Color.accent : root.fg
+                    text: root.selectedGame && root.selectedGame[root.detailSecond] ? root.selectedGame[root.detailSecond].score : ""
+                    color: root.detailFlashing || root.leads(root.selectedGame, root.detailSecond) ? Color.accent : root.fg
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.subtitle
                     font.bold: true
                   }
                   Text {
                     textFormat: Text.PlainText
-                    visible: root.selectedGame && root.selectedGame.home && root.selectedGame.home.record
-                    text: root.selectedGame && root.selectedGame.home ? "(" + root.selectedGame.home.record + ")" : ""
+                    visible: root.selectedGame && root.selectedGame[root.detailSecond] && root.selectedGame[root.detailSecond].record
+                    text: root.selectedGame && root.selectedGame[root.detailSecond] ? "(" + root.selectedGame[root.detailSecond].record + ")" : ""
                     color: root.fg
                     opacity: 0.45
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1851,8 +1908,8 @@ Panel {
                 }
                 Text {
                   textFormat: Text.PlainText
-                  visible: root.detailTeams && root.detailTeams.home && root.detailTeams.home.name
-                  text: root.detailTeams && root.detailTeams.home ? root.detailTeams.home.name : ""
+                  visible: root.detailTeams && root.detailTeams[root.detailSecond] && root.detailTeams[root.detailSecond].name
+                  text: root.detailTeams && root.detailTeams[root.detailSecond] ? root.detailTeams[root.detailSecond].name : ""
                   color: root.fg
                   opacity: 0.45
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1860,8 +1917,8 @@ Panel {
                   elide: Text.ElideRight
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
-                  HoverHandler { id: hoverDetailHome }
-                  PanelToolTip { visible: hoverDetailHome.hovered && parent.truncated; text: parent.text }
+                  HoverHandler { id: hoverDetailSecond }
+                  PanelToolTip { visible: hoverDetailSecond.hovered && parent.truncated; text: parent.text }
                 }
               }
             }
@@ -1914,8 +1971,8 @@ Panel {
               spacing: Style.space(6)
               Text {
                 textFormat: Text.PlainText
-                text: (root.selectedGame ? root.selectedGame.away.abbr : "") + " " + (root.detailPredictor ? root.detailPredictor.awayPct : "") + "%"
-                color: root.selectedGame && (root.selectedGame.away.color || "") !== "" ? root.teamColor(root.selectedGame.away.color) : root.fg
+                text: (root.selectedGame ? root.selectedGame[root.detailFirst].abbr : "") + " " + (root.detailPredictor ? root.detailPredictor[root.detailFirst + "Pct"] : "") + "%"
+                color: root.selectedGame && (root.selectedGame[root.detailFirst].color || "") !== "" ? root.teamColor(root.selectedGame[root.detailFirst].color) : root.fg
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -1929,8 +1986,8 @@ Panel {
               }
               Text {
                 textFormat: Text.PlainText
-                text: (root.detailPredictor ? root.detailPredictor.homePct : "") + "% " + (root.selectedGame ? root.selectedGame.home.abbr : "")
-                color: root.selectedGame && (root.selectedGame.home.color || "") !== "" ? root.teamColor(root.selectedGame.home.color) : root.fg
+                text: (root.detailPredictor ? root.detailPredictor[root.detailSecond + "Pct"] : "") + "% " + (root.selectedGame ? root.selectedGame[root.detailSecond].abbr : "")
+                color: root.selectedGame && (root.selectedGame[root.detailSecond].color || "") !== "" ? root.teamColor(root.selectedGame[root.detailSecond].color) : root.fg
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -2088,9 +2145,9 @@ Panel {
                     RowLayout {
                       width: parent.width
                       spacing: Style.space(8)
-                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams.away.abbr : ""; color: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : root.fg; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
+                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: root.detailTeams ? root.detailTeams[root.detailFirst].abbr : ""; color: root.detailTeams && (root.detailTeams[root.detailFirst].color || "") !== "" ? root.teamColor(root.detailTeams[root.detailFirst].color) : root.fg; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                       Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: ""; }
-                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams.home.abbr : ""; color: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : root.fg; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
+                      Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: root.detailTeams ? root.detailTeams[root.detailSecond].abbr : ""; color: root.detailTeams && (root.detailTeams[root.detailSecond].color || "") !== "" ? root.teamColor(root.detailTeams[root.detailSecond].color) : root.fg; font.bold: true; font.pixelSize: Style.font.caption; opacity: 0.9 }
                     }
                     Rectangle { width: parent.width; height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08) }
                     Repeater {
@@ -2098,11 +2155,11 @@ Panel {
                       delegate: Rectangle {
                         required property var modelData
                         required property int index
-                        readonly property real numA: Math.max(0, root.statNum(modelData.away))
-                        readonly property real numH: Math.max(0, root.statNum(modelData.home))
-                        readonly property real shareA: numA + numH > 0 ? numA / (numA + numH) : 0
-                        readonly property color awayCol: root.detailTeams && (root.detailTeams.away.color || "") !== "" ? root.teamColor(root.detailTeams.away.color) : Color.accent
-                        readonly property color homeCol: root.detailTeams && (root.detailTeams.home.color || "") !== "" ? root.teamColor(root.detailTeams.home.color) : Color.accent
+                        readonly property real numF: Math.max(0, root.statNum(modelData[root.detailFirst]))
+                        readonly property real numS: Math.max(0, root.statNum(modelData[root.detailSecond]))
+                        readonly property real shareF: numF + numS > 0 ? numF / (numF + numS) : 0
+                        readonly property color firstCol: root.detailTeams && (root.detailTeams[root.detailFirst].color || "") !== "" ? root.teamColor(root.detailTeams[root.detailFirst].color) : Color.accent
+                        readonly property color secondCol: root.detailTeams && (root.detailTeams[root.detailSecond].color || "") !== "" ? root.teamColor(root.detailTeams[root.detailSecond].color) : Color.accent
                         width: parent.width
                         height: statRow.implicitHeight + Style.space(4)
                         color: index % 2 === 1 ? Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.04) : "transparent"
@@ -2112,21 +2169,21 @@ Panel {
                           anchors.bottom: parent.bottom
                           anchors.right: parent.horizontalCenter
                           anchors.rightMargin: Style.space(88)
-                          visible: shareA > 0
-                          width: visible ? Math.max(2, shareA * (parent.width / 2 - Style.space(92))) : 0
+                          visible: shareF > 0
+                          width: visible ? Math.max(2, shareF * (parent.width / 2 - Style.space(92))) : 0
                           height: 2
                           radius: 1
-                          color: Qt.rgba(awayCol.r, awayCol.g, awayCol.b, 0.8)
+                          color: Qt.rgba(firstCol.r, firstCol.g, firstCol.b, 0.8)
                         }
                         Rectangle {
                           anchors.bottom: parent.bottom
                           anchors.left: parent.horizontalCenter
                           anchors.leftMargin: Style.space(88)
-                          visible: numH > 0
-                          width: visible ? Math.max(2, (1 - shareA) * (parent.width / 2 - Style.space(92))) : 0
+                          visible: numS > 0
+                          width: visible ? Math.max(2, (1 - shareF) * (parent.width / 2 - Style.space(92))) : 0
                           height: 2
                           radius: 1
-                          color: Qt.rgba(homeCol.r, homeCol.g, homeCol.b, 0.8)
+                          color: Qt.rgba(secondCol.r, secondCol.g, secondCol.b, 0.8)
                         }
                         RowLayout {
                           id: statRow
@@ -2134,9 +2191,9 @@ Panel {
                           anchors.leftMargin: Style.space(4)
                           anchors.rightMargin: Style.space(4)
                           spacing: Style.space(8)
-                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData.away; color: numA > numH ? awayCol : root.fg; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight; text: modelData[root.detailFirst]; color: numF > numS ? firstCol : root.fg; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                           Text { textFormat: Text.PlainText; Layout.preferredWidth: Style.space(160); horizontalAlignment: Text.AlignHCenter; text: root.trFn(modelData.label); color: root.fg; opacity: 0.5; font.pixelSize: Style.font.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
-                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData.home; color: numH > numA ? homeCol : root.fg; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
+                          Text { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignLeft; text: modelData[root.detailSecond]; color: numS > numF ? secondCol : root.fg; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight; font.family: "Monospace" }
                         }
                       }
                     }
@@ -2180,7 +2237,7 @@ Repeater {
                   RowLayout {
                     width: parent.width
                     spacing: 0
-                    // Away side - simple table with fixed name and scrollable stats
+                    // First side - simple table with fixed name and scrollable stats
                     Column {
                       Layout.fillWidth: true
                       Layout.preferredWidth: 1
@@ -2209,7 +2266,7 @@ Repeater {
                             }
                           }
                           Repeater {
-                            model: groupData.away
+                            model: groupData[root.detailFirst]
                             delegate: Text {
                               textFormat: Text.PlainText
                               required property var modelData
@@ -2256,7 +2313,7 @@ Repeater {
                               }
                             }
                             Repeater {
-                              model: groupData.away
+                              model: groupData[root.detailFirst]
                               delegate: Row {
                                 required property var modelData
                                 property var athleteData: modelData
@@ -2316,7 +2373,7 @@ Repeater {
                             }
                           }
                           Repeater {
-                            model: groupData.home
+                            model: groupData[root.detailSecond]
                             delegate: Text {
                               textFormat: Text.PlainText
                               required property var modelData
@@ -2363,7 +2420,7 @@ Repeater {
                               }
                             }
                             Repeater {
-                              model: groupData.home
+                              model: groupData[root.detailSecond]
                               delegate: Row {
                                 required property var modelData
                                 property var athleteData: modelData

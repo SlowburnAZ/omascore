@@ -35,6 +35,11 @@ function leagueFor(id) {
     for (var i = 0; i < leagues.length; i++) if (leagues[i].id === id) return leagues[i]
     return leagues[0]
 }
+// Presentation order of the two sides, by each sport's native convention:
+// world football lists home first ("PSG v SLB"), US leagues list away first.
+function teamOrderDefault(leagueId) {
+    return leagueFor(leagueId).sport === "soccer" ? "home" : "away"
+}
 function apiUrlFor(sport, league) { return "https://site.api.espn.com/apis/site/v2/sports/" + sport + "/" + league + "/scoreboard" }
 function summaryBaseFor(sport, league) { return "https://site.api.espn.com/apis/site/v2/sports/" + sport + "/" + league + "/summary" }
 

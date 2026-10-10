@@ -33,6 +33,7 @@ var dict = {
     "Hide finished games": "Ocultar partidos terminados",
     "Hide games that have already ended": "Oculta los partidos que ya han terminado",
     "Bar display": "Visualización en la barra",
+    "Team order": "Orden de equipos",
     "Language": "Idioma",
     // game list
     "No games scheduled": "No hay partidos programados",
@@ -45,6 +46,7 @@ var dict = {
     "No favorite games today \u2014 tap \u2606 on a team to follow it": "Sin partidos de favoritos hoy \u2014 toca \u2606 en un equipo para seguirlo",
     "this day": "este día",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 comienza en %3 min",
+    "%1 v %2 kicks off in %3 min": "%1 v %2 comienza en %3 min",
     // detail tabs / sections
     "Overall": "General",
     "Players": "Jugadores",
@@ -134,6 +136,7 @@ var dict = {
     "Hide finished games": "Ocultar jogos encerrados",
     "Hide games that have already ended": "Oculta os jogos que já terminaram",
     "Bar display": "Exibição na barra",
+    "Team order": "Ordem dos times",
     "Language": "Idioma",
     // game list
     "No games scheduled": "Nenhum jogo agendado",
@@ -146,6 +149,7 @@ var dict = {
     "No favorite games today \u2014 tap \u2606 on a team to follow it": "Sem jogos de favoritos hoje \u2014 toque \u2606 em um time para segui-lo",
     "this day": "este dia",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 começa em %3 min",
+    "%1 v %2 kicks off in %3 min": "%1 v %2 começa em %3 min",
     // detail tabs / sections
     "Overall": "Geral",
     "Players": "Jogadores",
@@ -234,6 +238,7 @@ var dict = {
     "Hide finished games": "Afgelopen wedstrijden verbergen",
     "Hide games that have already ended": "Verbergt wedstrijden die al zijn afgelopen",
     "Bar display": "Balkweergave",
+    "Team order": "Teamvolgorde",
     "Language": "Taal",
     // game list
     "No games scheduled": "Geen wedstrijden gepland",
@@ -246,6 +251,7 @@ var dict = {
     "No favorite games today \u2014 tap \u2606 on a team to follow it": "Geen favoriete wedstrijden vandaag \u2014 tik \u2606 op een team om het te volgen",
     "this day": "deze dag",
     "%1 @ %2 kicks off in %3 min": "%1 @ %2 begint over %3 min",
+    "%1 v %2 kicks off in %3 min": "%1 v %2 begint over %3 min",
     // detail tabs / sections
     "Overall": "Algemeen",
     "Players": "Spelers",
