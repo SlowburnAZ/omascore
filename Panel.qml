@@ -407,7 +407,13 @@ Panel {
     // session cache: paint the last payload for this league while the fresh fetch runs
     if (root.games.length === 0 && root.sessionCache[root.currentLeagueId]) root.parseGames(root.sessionCache[root.currentLeagueId], true)
     var args = Model.fetchArgs(ds, root.currentLeagueId)
-    if (!args) return
+    if (!args) {
+      // Invalid date string (e.g. a malformed ymd): never fail silently —
+      // a quiet return here idles on the skeleton with no error.
+      console.log("OmaScore: bad date string", ds, "for", root.currentLeagueId)
+      if (root.games.length === 0) root.lastError = "Couldn't load scores"
+      return
+    }
     fetchProc.running = false; fetchProc.command = args; fetchProc.running = true
   }
   // Favorites aggregate: today's favorited-team games from every covered
@@ -750,10 +756,22 @@ Panel {
       onStreamFinished: {
         var t = root.gated(text)
         if (t === null) return
+        if (!t.trim()) {
+          // curl -f yields no output on HTTP/network failure: surface it
+          // instead of idling on the skeleton (games empty, lastError "").
+          console.log("OmaScore: scoreboard fetch empty for", root.currentLeagueId, root.lastFetchedDay)
+          if (root.games.length === 0) root.lastError = "Couldn't load scores"
+          return
+        }
         root.parseGames(t)
         // session paint cache (memory-only; nothing hits disk)
         if (t.trim()) root.sessionCache[root.currentLeagueId] = t
       }
+    }
+    stderr: StdioCollector { id: fetchErr; waitForEnd: true }
+    onExited: function(exitCode) {
+      // Diagnostic only: results are processed in onStreamFinished above.
+      if (exitCode !== 0) console.log("OmaScore: curl exit", exitCode, "for", root.currentLeagueId, root.lastFetchedDay, String(fetchErr.text).slice(-200))
     }
   }
 
@@ -848,7 +866,16 @@ Panel {
     root.leagueRestored = true
     if (saved !== root.currentLeagueId && Model.leagueFor(saved).id === saved) root.setLeague(saved)
   }
-  function initForCurrent() { root.restoreFavorites(); root.restoreLastLeague(); root.initWeek() }
+  // Startup: restoreLastLeague inits the week itself when it switches
+  // leagues, so only init here when it didn't — otherwise the first fetch
+  // is killed mid-flight by the second (SIGTERM, curl exit 15) on every
+  // launch, doubling startup traffic.
+  function initForCurrent() {
+    root.restoreFavorites()
+    var before = root.currentLeagueId
+    root.restoreLastLeague()
+    if (root.currentLeagueId === before) root.initWeek()
+  }
   Component.onCompleted: {
     root.favWatcher = function(f) { root.favorites = f; root.applyFavorites() }
     Model.favWatchers.push(root.favWatcher)

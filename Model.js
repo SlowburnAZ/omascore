@@ -39,8 +39,11 @@ function apiUrlFor(sport, league) { return "https://site.api.espn.com/apis/site/
 function summaryBaseFor(sport, league) { return "https://site.api.espn.com/apis/site/v2/sports/" + sport + "/" + league + "/summary" }
 
 function ymd(d) {
-    var y = d.getFullYear(), m = d.getMonth() + 1, dd = d.getDate()
-    return y + (m < 10 ? "0" + m : m) + (dd < 10 ? "0" + dd : dd)
+    // Both branches must stay strings: a bare (m >= 10 ? m : ...) number
+    // poisons the whole chain into numeric addition (Oct 2026 → 2046),
+    // failing fetchArgs' YYYYMMDD check and silently fetching nothing.
+    function p(n) { return (n < 10 ? "0" : "") + n }
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
 }
 
 function sundayOf(d) {
